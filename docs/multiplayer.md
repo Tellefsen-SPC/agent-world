@@ -112,9 +112,11 @@ Compass's problem, not the world's.
 
 ## Open questions for Christoffer
 
-1. **Identity provider.** Cloudflare Access with the firm's Google accounts is the shortest path. Supabase
-   Auth (what `viewer.mjs` anticipated) puts the grants next to the ledger. One is enough; pick one.
+1. **Identity provider.** *Decided 2026-10-04 by the developer under delegated authority, to ratify:*
+   Cloudflare Access with the firm's Google accounts, grants from configuration for now (`docs/adr/0006`).
+   Supabase Auth (what `viewer.mjs` anticipated) would have put the grants next to the ledger.
 2. **Where the grant table lives.** Compass (`ops_world_grants`, a migration through the U3 runner) or a
    config key. A table is easier to audit.
-3. **Does a client ever see cost?** Today spend is Owner-only by design. Showing a client their own town's
-   cost is a commercial decision, not a technical one.
+3. **Does a client ever see cost?** *Decided 2026-10-04 by the developer under delegated authority, to
+   ratify:* no. Spend stays Owner-only, and the side port enforces it (`docs/adr/0005`). Note that the repo is
+   public today and its spend fixture publishes per-client figures; making it private is an owner action.

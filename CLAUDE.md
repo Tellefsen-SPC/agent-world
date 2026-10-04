@@ -39,6 +39,7 @@ Here that means: `actor` draws an avatar and nothing else; `human_edit_level`, t
 - `./init.sh` — install, build, syntax-check the adapter, `npm test`, start the server, smoke `/api/harnesses` (compass detected) and `/api/threads`. Run it first, every session.
 - `./dev.sh` — the world at http://127.0.0.1:5274 (loads `.env`, then `npm run dev`). **Plain `npm run dev` does not read `.env` and shows an empty world** — Vite never passes `.env` to the server-side API. `npm test` — invariants + adapter fixture tests.
 - `scripts/zztest-seed.sh` — posts the standing ZZTEST runs to `/events` (needs `EVENTS_BEARER_TOKEN` and `ZZTEST_PA_URL`). `scripts/reset-view.sh` — clears this browser's local hide list (A key) so every run shows again.
+- `RUNBOOK.md` — for whoever runs the world: settings, the "Compass unavailable" pill, re-capturing fixtures, failures as symptom → check → fix. `docs/adr/` — the fork's standing calls and their status. CI (`.github/workflows/ci.yml`) runs `npm ci`, `npm test`, `npm run build` on every push and PR.
 
 ## Session rules
 1. Read `claude-progress.txt`, `git log --oneline -20`, `feature_list.json`; run `./init.sh` before changing anything.
@@ -55,4 +56,4 @@ Design detail → decide in-session, note it in `claude-progress.txt`, propose a
 Unit Built → its check passes in the verifier's hands → Verified. All M1 units Verified → M1 regression pass → M1 Done (`milestone-close`). All milestones Done → acceptance. The builder never self-declares.
 
 ---
-Changes: 2026-09-06 · v1 · written by build-kickoff v1.3. · 2026-09-08 · session rule 6 gains the usage block (U35, Prompt D from Christoffer). · 2026-10-04 · factual fixes: the repo's name and visibility (public; private is the decision, an owner action), the fork base checked by merge-base, the ZZTEST cleanup is `zztest-seed.sh --clean` (the .sql is gone) — by the developer under delegated authority, to ratify.
+Changes: 2026-09-06 · v1 · written by build-kickoff v1.3. · 2026-09-08 · session rule 6 gains the usage block (U35, Prompt D from Christoffer). · 2026-10-04 · factual fixes: the repo's name and visibility (public; private is the decision, an owner action), the fork base checked by merge-base, the ZZTEST cleanup is `zztest-seed.sh --clean` (the .sql is gone); Commands names RUNBOOK.md, docs/adr/ and CI — by the developer under delegated authority, to ratify.
