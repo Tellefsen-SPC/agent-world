@@ -33,23 +33,35 @@ export const STREAM_DEFAULTS = Object.freeze({
   idleMs: 45_000, // three keepalive periods of silence, and the connection is given up
   minLifeMs: 5_000, // a connection that closes sooner with no event sent counts as a failure, not a routine close
   maxMessageBytes: 1 << 20, // one event never needs a megabyte
+  maxLineBytes: 1 << 20, // nor one line — a line with no end in sight ends the connection
   maxIdLength: 256, // `<at>|<uuid>` is ~60 characters; anything much longer is not a resume id
 })
 
 /**
- * Server-sent events parser — the WHATWG event-stream interpretation: lines end in CRLF, LF or CR (a CR at the end of a
- * chunk waits for the next one); `:` starts a comment; `event`, `data`, `id`, `retry` are the fields; a blank line
- * dispatches. An `id` with a NUL is ignored; the last id persists across messages, as the spec's last-event-id buffer does.
+ * Server-sent events parser — the WHATWG event-stream interpretation: lines end in CRLF, LF or CR; `:` starts a comment;
+ * `event`, `data`, `id`, `retry` are the fields; a blank line dispatches. An `id` field fills the last-event-id buffer,
+ * which becomes the resume point (`lastEventId()`) only when a blank line dispatches it, so a stream cut in the middle
+ * of an event resumes from the last event that was whole. An `id` with a NUL is ignored.
+ *
+ * Linear however the bytes arrive: each chunk is scanned once, and an unfinished line is kept as pieces joined only when
+ * it ends (rescanning a growing line on every chunk was quadratic). A CR at the end of a chunk ends its line at once; an
+ * LF opening the next chunk is then the second half of that CRLF. A line past `maxLineBytes`, finished or not, and a
+ * message past `maxBytes` throw — the caller ends the connection.
  */
-export function createParser({ onMessage = () => {}, onComment = () => {}, onRetry = () => {}, maxBytes = STREAM_DEFAULTS.maxMessageBytes } = {}) {
-  let buf = ''
+export function createParser({ onMessage = () => {}, onComment = () => {}, onRetry = () => {}, maxBytes = STREAM_DEFAULTS.maxMessageBytes, maxLineBytes = STREAM_DEFAULTS.maxLineBytes } = {}) {
+  let parts = [] // the current unfinished line, in pieces
+  let partLength = 0
+  let skipLF = false
   let data = []
   let dataBytes = 0
   let event = ''
+  let idBuffer = ''
   let lastEventId = ''
 
   function line(text) {
+    if (text.length > maxLineBytes) throw new Error(`a line ran past ${maxLineBytes} bytes`)
     if (text === '') {
+      lastEventId = idBuffer // dispatch: the id this event carried is now the resume point
       if (data.length) onMessage({ event: event || 'message', data: data.join('\n'), id: lastEventId })
       data = []
       dataBytes = 0
@@ -67,31 +79,43 @@ export function createParser({ onMessage = () => {}, onComment = () => {}, onRet
       if (dataBytes > maxBytes) throw new Error(`a message ran past ${maxBytes} bytes`)
     } else if (field === 'event') event = value
     else if (field === 'id') {
-      if (!value.includes('\0')) lastEventId = value
+      if (!value.includes('\0')) idBuffer = value
     } else if (field === 'retry' && /^\d+$/.test(value)) onRetry(Number(value))
   }
 
   return {
     feed(chunk) {
-      buf += chunk
       let start = 0
-      for (let i = 0; i < buf.length; i++) {
-        const c = buf[i]
-        if (c !== '\n' && c !== '\r') continue
-        if (c === '\r' && i === buf.length - 1) break // maybe the first half of a CRLF: wait for the next chunk
-        line(buf.slice(start, i))
-        if (c === '\r' && buf[i + 1] === '\n') i++
+      if (skipLF) {
+        skipLF = false
+        if (chunk.charCodeAt(0) === 10) start = 1
+      }
+      for (let i = start; i < chunk.length; i++) {
+        const c = chunk.charCodeAt(i)
+        if (c !== 10 && c !== 13) continue
+        const piece = chunk.slice(start, i)
+        const text = parts.length ? parts.join('') + piece : piece
+        parts = []
+        partLength = 0
+        if (c === 13) {
+          if (i + 1 === chunk.length) skipLF = true
+          else if (chunk.charCodeAt(i + 1) === 10) i++
+        }
         start = i + 1
+        line(text)
       }
-      buf = buf.slice(start)
-      if (buf.length > maxBytes) throw new Error(`a line ran past ${maxBytes} bytes`)
+      if (start < chunk.length) {
+        const rest = start === 0 ? chunk : chunk.slice(start)
+        partLength += rest.length
+        if (partLength > maxLineBytes) throw new Error(`a line ran past ${maxLineBytes} bytes`)
+        parts.push(rest)
+      }
     },
-    /** The stream ended: a CR held back as a possible CRLF was a line end after all. An unfinished event is dropped. */
+    /** The stream ended: an unfinished line, and an event without its blank line, are dropped (as the spec says). */
     end() {
-      if (buf.endsWith('\r')) {
-        line(buf.slice(0, -1))
-        buf = ''
-      }
+      parts = []
+      partLength = 0
+      skipLF = false
     },
     lastEventId: () => lastEventId,
   }
@@ -109,7 +133,8 @@ export function createStream(cfg, { onEvent = () => {}, log = () => {}, warn = (
   const iso = (t) => (t ? new Date(t).toISOString() : null)
   const dur = (ms) => (ms < 1000 ? `${ms} ms` : `${Math.round(ms / 100) / 10} s`)
   let running = false
-  let req = null
+  let req = null // the live connection's request, if any — stop() ends it; a connection only ever ends its own
+  let generation = 0 // bumped by every connect and by stop(): an older connection's late callbacks change nothing
   let timer = null
   let lastEventId = ''
   let retryMs = 1000
@@ -142,6 +167,8 @@ export function createStream(cfg, { onEvent = () => {}, log = () => {}, warn = (
 
   function connect() {
     if (!running) return
+    const mine = ++generation
+    let own = null // this connection's own request
     set('connecting')
     st.reconnects += st.connectedAt ? 1 : 0
     const headers = { Authorization: `Bearer ${cfg.eventsBearerToken}`, Accept: 'text/event-stream', 'Cache-Control': 'no-store' }
@@ -158,7 +185,7 @@ export function createStream(cfg, { onEvent = () => {}, log = () => {}, warn = (
      * and stay one warning. It counts as healthy once it delivers an event or stays open for `minLifeMs`.
      */
     const markHealthy = () => {
-      if (healthy || !running) return
+      if (healthy || !running || mine !== generation) return
       healthy = true
       if (failures > 0) warn(`${SUBSCRIBED} — back after ${failures} failed ${failures === 1 ? 'try' : 'tries'}`)
       failures = 0
@@ -171,10 +198,10 @@ export function createStream(cfg, { onEvent = () => {}, log = () => {}, warn = (
       clearTimeout(idle)
       clearTimeout(healthyTimer)
       try {
-        req?.destroy()
+        own?.destroy()
       } catch { /* already gone */ }
-      req = null
-      fn()
+      if (req === own) req = null
+      if (mine === generation) fn() // a connection that stop() or a newer connect() replaced has nothing more to say
     }
     const deadline = unref(setTimeout(() => finish(() => failed(`GET /events/stream did not answer within ${dur(connectMs)}`)), connectMs))
     const quiet = () => {
@@ -182,8 +209,12 @@ export function createStream(cfg, { onEvent = () => {}, log = () => {}, warn = (
       idle = unref(setTimeout(() => finish(() => failed(`GET /events/stream went quiet for ${dur(o.idleMs)}`)), o.idleMs))
     }
     try {
-      req = lib.get(cfg.streamUrl, { headers, agent: false }, (res) => {
+      own = req = lib.get(cfg.streamUrl, { headers, agent: false }, (res) => {
         clearTimeout(deadline)
+        if (mine !== generation) {
+          res.resume() // headers for a connection stop() already replaced: end it quietly
+          return finish(() => {})
+        }
         const type = String(res.headers['content-type'] || '')
         if (res.statusCode !== 200 || !/^text\/event-stream/i.test(type)) {
           res.resume()
@@ -202,6 +233,7 @@ export function createStream(cfg, { onEvent = () => {}, log = () => {}, warn = (
         quiet()
         const parser = createParser({
           maxBytes: o.maxMessageBytes,
+          maxLineBytes: o.maxLineBytes,
           onRetry: (ms) => (retryMs = ms),
           onMessage: (m) => {
             if (m.event === 'error') return log(`realtime: the Worker reported ${m.data.slice(0, 200)}`)
@@ -226,7 +258,7 @@ export function createStream(cfg, { onEvent = () => {}, log = () => {}, warn = (
         })
         res.setEncoding('utf8')
         res.on('data', (chunk) => {
-          if (done) return
+          if (done || mine !== generation) return
           quiet()
           try {
             parser.feed(chunk)
@@ -254,8 +286,8 @@ export function createStream(cfg, { onEvent = () => {}, log = () => {}, warn = (
         res.on('error', (err) => finish(() => failed(`GET /events/stream: ${err?.code || err?.message || err}`)))
         res.on('close', () => finish(() => failed('GET /events/stream: the connection dropped')))
       })
-      req.on('socket', (socket) => socket.unref?.())
-      req.on('error', (err) => finish(() => failed(`GET /events/stream: ${err?.code || err?.message || err}`)))
+      own.on('socket', (socket) => socket.unref?.())
+      own.on('error', (err) => finish(() => failed(`GET /events/stream: ${err?.code || err?.message || err}`)))
     } catch (err) {
       // a header the runtime refuses (e.g. a resume id with a control character): drop the id and try again
       lastEventId = ''
@@ -276,6 +308,7 @@ export function createStream(cfg, { onEvent = () => {}, log = () => {}, warn = (
     },
     stop() {
       running = false
+      generation += 1
       clearTimeout(timer)
       timer = null
       try {

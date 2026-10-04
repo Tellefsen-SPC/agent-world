@@ -78,8 +78,39 @@ test('the parser reads the Worker\'s frames however the bytes are split, with LF
   const p = createParser()
   p.feed(`id: bad\0id\n\n`)
   assert.equal(p.lastEventId(), '', 'an id with a NUL is ignored')
-  assert.throws(() => createParser({ maxBytes: 64 }).feed(`data: ${'x'.repeat(100)}\n`), /ran past 64 bytes/)
-  assert.throws(() => createParser({ maxBytes: 64 }).feed('x'.repeat(100)), /ran past 64 bytes/, 'a line with no end is bounded too')
+  assert.throws(() => createParser({ maxBytes: 64 }).feed(`data: ${'x'.repeat(40)}\ndata: ${'x'.repeat(40)}\n`), /a message ran past 64 bytes/)
+})
+
+test('an id becomes the resume point only when its event is dispatched: a stream cut mid-event resumes from the last whole one', () => {
+  const p = createParser()
+  p.feed(frame(ID_A, row('a')))
+  p.feed(`id: ${ID_B}\nevent: ledger\n`) // the next event starts, and the connection is cut before its blank line
+  assert.equal(p.lastEventId(), ID_A, 'B was never dispatched, so it is not where a reconnect resumes')
+  p.end()
+  assert.equal(p.lastEventId(), ID_A, 'the end of the stream does not commit it either')
+  const q = createParser()
+  q.feed(`id: ${ID_B}\nevent: ledger\ndata: {}\n`)
+  assert.equal(q.lastEventId(), '')
+  q.feed('\n')
+  assert.equal(q.lastEventId(), ID_B, 'committed by the blank line that dispatches it')
+})
+
+test('a long line is read in one pass however it is cut up, and an unterminated line past its cap is refused', { timeout: 10000 }, () => {
+  // each chunk is scanned once: 50,000 one-byte chunks used to rescan the growing line every time (seconds; now ms)
+  const got = []
+  const p = createParser({ onMessage: (m) => got.push(m), maxBytes: 1e6, maxLineBytes: 1e6 })
+  const started = Date.now()
+  p.feed('data: ')
+  for (let i = 0; i < 50_000; i++) p.feed('x')
+  p.feed('\n\n')
+  assert.ok(Date.now() - started < 500, `took ${Date.now() - started} ms`)
+  assert.equal(got.length, 1)
+  assert.equal(got[0].data.length, 50_000)
+  // the cap on a line that never ends: fine up to it, refused past it
+  const capped = createParser({ maxLineBytes: 256 })
+  for (let i = 0; i < 25; i++) capped.feed('y'.repeat(10))
+  assert.throws(() => capped.feed('y'.repeat(10)), /a line ran past 256 bytes/)
+  assert.throws(() => createParser({ maxLineBytes: 256 }).feed(`data: ${'z'.repeat(300)}\n`), /a line ran past 256 bytes/, 'a whole line over the cap too')
 })
 
 test('subscribes with the bearer, hands each ledger event on, and resumes from Last-Event-ID when the Worker closes the stream', { timeout: 10000 }, async () => {
@@ -191,7 +222,8 @@ test('a Worker that never answers, answers in the wrong type, goes quiet, or sen
   const cases = [
     ['wrong type', (req, res) => { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end('<html>login</html>') }, /did not answer with text\/event-stream/, {}],
     ['quiet', (req, res) => { open(res); res.write(': connected\n\n') }, /went quiet for 80 ms/, { idleMs: 80, minLifeMs: 1000 }],
-    ['giant', (req, res) => { open(res); res.write(`data: ${'x'.repeat(5000)}`) }, /ran past 1024 bytes/, { maxMessageBytes: 1024, minLifeMs: 1000 }],
+    ['giant message', (req, res) => { open(res); for (let i = 0; i < 10; i++) res.write(`data: ${'x'.repeat(500)}\n`) }, /a message ran past 1024 bytes/, { maxMessageBytes: 1024, minLifeMs: 1000 }],
+    ['endless line', (req, res) => { open(res); res.write(`data: ${'x'.repeat(5000)}`) }, /a line ran past 1024 bytes/, { maxLineBytes: 1024, minLifeMs: 1000 }],
     ['empty close', (req, res) => { open(res); res.end() }, /closed after \d+ ms with nothing sent/, { minLifeMs: 5000 }],
   ]
   for (const [name, handler, why, opts] of cases) {
@@ -253,6 +285,52 @@ test('stop() ends the stream and nothing reconnects; a resume id too long to be 
     await sleep(100)
     assert.equal(w.requests.length, 2, 'stopped: no further connection')
     assert.equal(c.s.status().state, 'off')
+  } finally {
+    c.s.stop()
+    await w.close()
+  }
+})
+
+test('a connection cut in the middle of an event resumes from the last event that was whole', { timeout: 5000 }, async () => {
+  const w = await worker((req, res, n) => {
+    open(res)
+    if (n === 1) {
+      res.write(frame(ID_A, row('a')))
+      res.end(`id: ${ID_B}\nevent: ledger\ndata: {"id":"b"`) // cut before the event is complete
+    }
+  })
+  const c = client(w.url)
+  try {
+    c.s.start()
+    await until(() => w.requests.length === 2, 2000, 'the reconnect')
+    assert.equal(w.requests[1].headers['last-event-id'], ID_A, 'not the id of the event that never arrived')
+    assert.deepEqual(c.events.map((e) => e.id), ['a'])
+  } finally {
+    c.s.stop()
+    await w.close()
+  }
+})
+
+test('stop() then start() on the same instance connects again, and the old connection\'s end does not touch the new one', { timeout: 5000 }, async () => {
+  const closed = []
+  const w = await worker((req, res, n) => {
+    req.on('close', () => closed.push(n))
+    open(res)
+    res.write(': connected\n\n')
+  })
+  const c = client(w.url, { minLifeMs: 50 })
+  try {
+    c.s.start()
+    await until(() => c.s.status().state === 'open', 2000, 'the first connection')
+    c.s.stop()
+    c.s.start() // at once, before the first connection's close has been seen
+    await until(() => w.requests.length === 2 && c.s.status().state === 'open', 2000, 'the second connection')
+    await sleep(200)
+    assert.equal(w.requests.length, 2, 'no extra reconnect from the old connection ending')
+    assert.deepEqual(closed, [1], 'only the first request was closed; the second is still open')
+    assert.equal(c.s.status().state, 'open')
+    assert.equal(c.s.status().failures, 0)
+    assert.ok(!c.warns.some((m) => /unavailable/.test(m)), `no outage reported: ${c.warns.join(' | ')}`)
   } finally {
     c.s.stop()
     await w.close()
