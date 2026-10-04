@@ -83,7 +83,7 @@ A viewer recognises the firm, not Bot Crossing: clients are towns, companies are
 - **While the ledger scan or the substrate is failing**, the world keeps what it last saw, and the strip says "Compass unavailable · since HH:MM". Its tooltip says what on screen is current, old or never loaded.
 - **Polls during a scan share it.**
 - **A town card carries `Today · $… · N runs`**, under the Owner preset only, never per person.
-- **The adapter reads exactly four Worker routes.**
+- **The adapter reads exactly four Worker routes.** *(five since 2026-10-04: U7 adds the event stream, `GET /events/stream` — §4.7; to ratify)*
 
 Built when the V-U37 automated steps are green, a dead and a hanging Compass both give the pill with no crash, the Today line matches `GET /ledger/cost?days=1` for one town, and `src/` is untouched. Write-up: `docs/multiplayer.md`.
 
@@ -137,7 +137,7 @@ export default {
 }
 ```
 
-### 4.3 Data flow per scan (browser polls every 15 s; scan result cached 5 s)
+### 4.3 Data flow per scan (browser polls every 15 s; scan result cached 5 s from when the scan finishes — 2026-10-04, U7)
 1. `{events, rows} = GET /ledger/scan?since=<now - WINDOW>` on the Worker (U10), bearer-authenticated. The Worker does the Supabase paging server-side and already scopes `rows` to the run ids present in `events` — the local client makes one call, not two.
 2. `runs = fold(events)` — group by `run_id`, sorted by `at`:
    - `skill`, `trigger`, `client`, `project`, `actor` from `run_started`, else from the first event carrying them.
@@ -186,7 +186,9 @@ For each open gate: `surface = pending_approval` → parse base/table/record fro
 ### 4.7 Realtime nudge (U7) — over the Worker's event stream
 *Re-cut 2026-10-04 by the developer under delegated authority, to ratify at the next build-kickoff refresh. ES-1.10 reads with "the adapter's stream subscription" for "the adapter's Realtime subscription".*
 Originally a direct `supabase.channel(...).on('postgres_changes', ...)` subscription from this machine. That was never possible: a client-side Realtime subscription needs a Supabase key on this machine, which Lovable-Cloud-managed projects don't expose (U10's whole reason for existing). The Compass Worker now streams the ledger itself — `GET /events/stream` (approval layer P8), server-sent events of `ops_run_events`, polled server-side every 2 s, same bearer as `/events`, resumable with `Last-Event-ID` — and the adapter listens to that instead (`server/harnesses/compass/stream.mjs`):
-- Each `event: ledger` drops the scan cache, so the next poll reads the ledger instead of a cached answer; an event that lands while a scan runs marks that scan's answer stale too.
+- The scan is cached for 5 s from when it *finishes*. Before 2026-10-04 it was stamped with its start, so a 6–9 s live scan was already stale by the next poll, and there was nothing for a nudge to drop.
+- Each `event: ledger` drops the scan cache, so a poll inside that window reads the ledger at once instead of the cached answer. An event that lands while a scan runs marks that scan's answer stale too.
+- `GET /world` carries `signals.stream = {enabled, connected, state, since, lastEventAt, nudges, nudgedScans, reconnects, error}`, counts and times only. `nudgedScans` counts the scans that ran early because an event dropped a fresh cache: the one thing only the nudge causes (V-U7).
 - It reconnects with exponential backoff (1 s → 60 s) and `Last-Event-ID`, and is bounded: the adapter never waits for it, the headers have the read deadline, 45 s of silence ends a connection, and a message over 1 MB is cut off.
 - A stream that is down is not an outage: the 5 s cache and the browser's 15 s poll carry on, and the "Compass unavailable" pill does not read it. `WORLD_STREAM=0` switches it off.
 - The URL is `compass/config.mjs`'s, derived from `EVENTS_URL` like the other four reads; the contract guard allows it as the fifth route (`docs/CONTRACT.md`).

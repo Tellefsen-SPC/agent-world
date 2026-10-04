@@ -37,11 +37,12 @@ Open http://127.0.0.1:5274. Stop it with Ctrl-C in that terminal.
 - To check the world's own view of Compass, while it runs:
 
 ```
-curl -s 127.0.0.1:5275/world | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const w=JSON.parse(s);console.log({compass:w.signals.compass,realtime:w.signals.realtime})})'
+curl -s 127.0.0.1:5275/world | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const w=JSON.parse(s);console.log({compass:w.signals.compass,stream:w.signals.stream})})'
 ```
 
-`compass.ok: true` means the ledger and the client map are answering. `realtime.state: 'open'` means the live
-nudge is connected (section 2, `WORLD_STREAM`).
+`compass.ok: true` means the ledger and the client map are answering. `stream.connected: true` means the live
+nudge is connected (section 2, `WORLD_STREAM`). `stream.nudgedScans` counts the times it made the world read
+Compass early because something changed.
 
 ## 2. Settings (`.env`)
 

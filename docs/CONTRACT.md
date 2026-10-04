@@ -33,12 +33,23 @@ background scan, and `WORLD_READ_TIMEOUT_MS` (10 s) for every other read, Notion
   and the strip draws it as a "Compass unavailable" pill. Polls that land during a ledger scan share it.
 
 **The realtime nudge (U7).** The Worker streams the ledger as server-sent events (`GET /events/stream`, the events
-bearer). The adapter listens and drops its 5 s scan cache on each event, so the next poll reads the ledger instead
-of a cached answer; an event that lands while a scan runs marks that scan's answer stale too. The browser still polls
+bearer). The adapter listens and drops its scan cache on each event, so a poll inside the cache window reads the
+ledger instead of a cached answer; an event that lands while a scan runs marks that scan's answer stale too. The cache
+lasts 5 s from when the scan *finishes* (since 2026-10-04; it used to count from the start, which a 6–9 s scan had
+already used up). The browser still polls
 `/api/threads` every 15 s (upstream `src/`, unchanged), so the nudge makes the next poll fresh — it does not make the
 page poll sooner. The stream never holds up a poll: it runs on its own, every wait has a deadline (the headers within
 `WORLD_READ_TIMEOUT_MS`, then at most 45 s of silence), a message over 1 MB is cut off, and failures back off from 1 s
 to 60 s (a refused bearer, or a Worker without the route, waits the 60 s at once). A stream that is down is not an
-outage: the "Compass unavailable" pill reads the ledger scan and the substrate only. `GET /world` carries
-`signals.realtime = {enabled, state, since, connectedAt, lastEventAt, events, reconnects, failures, error, retryInMs}`
-(`state` ∈ off · connecting · open · waiting), never the token.
+outage: the "Compass unavailable" pill reads the ledger scan and the substrate only.
+
+**What `GET /world` (the side port) says about Compass.** Two records under `signals`, counts and times only — no
+token, no run, no person:
+- `signals.compass = {ok, downSince, lastGoodAt, error, failing, seen}` (U37). `ok` is null until a read has
+  finished and false while the ledger scan or the substrate is failing. `failing` names the failing sources
+  (`ledger`, `substrate`). `seen` gives, per source, when it last answered (null if never), so the pill's tooltip can
+  say what on screen is current, old or never loaded. `downSince` is the earliest failure still standing.
+  `lastGoodAt` is when the failing sources last answered.
+- `signals.stream = {enabled, connected, state, since, lastEventAt, nudges, nudgedScans, reconnects, error}` (U7).
+  `state` is one of off, connecting, open or waiting. `nudges` counts the events that dropped the cache.
+  `nudgedScans` counts the scans that ran early because of one; it stays 0 with `WORLD_STREAM=0`.

@@ -138,15 +138,20 @@
     {
       "id": "U7",
       "category": "seam",
-      "description": "Realtime nudge: the adapter subscribes to postgres_changes on ops_run_events and drops its scan cache on insert, so the next poll reflects an event that landed seconds ago; this demonstrates Realtime delivery to a subscriber (M0's open check)",
+      "description": "Realtime nudge — re-cut 2026-10-04 by the developer under delegated authority, to ratify (SPEC.md §4.7, docs/adr/0007): the adapter listens to the Compass Worker's GET /events/stream (server-sent events of ops_run_events, the events bearer, resumed with Last-Event-ID) and drops its scan cache on each event — a scan in flight is marked stale too — so a poll inside the 5 s cache window (counted from when the scan finished) reads the ledger at once instead of a cached answer; it reconnects with backoff and is bounded so it never holds up a poll; a stream that is down is not an outage; WORLD_STREAM=0 switches it off; GET /world carries signals.stream {enabled, connected, state, since, lastEventAt, nudges, nudgedScans, reconnects, error}, counts and times only. The first design (Supabase postgres_changes) needed a Supabase key this machine never holds; M0's Realtime-delivery check is not closed by this path (the Worker reads the table every 2 s).",
       "delivers": [
         "ES-1.10"
       ],
       "steps": [
-        "Server log shows 'realtime: subscribed ops_run_events' within 5 s of start and reconnects after a forced disconnect",
-        "Post an event via /events: the log shows the insert received within 2 s and 'scan cache invalidated'",
-        "The next /api/threads (poll) reflects the event without waiting for the 5 s cache to expire",
-        "With Realtime unreachable (bad URL) the world still works on the 5 s cache and logs once"
+        "automated: the SSE parser reads the Worker's frames however the bytes are split, with LF, CRLF or CR line ends; an id becomes the resume point only when its event is dispatched (an event cut off mid-way leaves the previous one); an unterminated line past the cap ends the connection",
+        "automated: against a local stand-in for the Worker: subscribes with the bearer and Accept text/event-stream, hands each `event: ledger` row on, resumes from Last-Event-ID after the Worker closes the stream, honours its retry hint; one warning for an outage and one for the recovery, none for a routine reconnect",
+        "automated: backoff doubles up to its cap; a refused bearer (401/403) or a Worker without the route (404/405) waits the longest at once; no answer, the wrong content type, silence, a giant message and an empty close are each given up on and retried, and a Worker that opens and then fails keeps backing off",
+        "automated: WORLD_STREAM=0 (off/false/no) makes no connection; the stream URL is derived from EVENTS_URL only when it ends in /events; stop() ends the stream with nothing reconnecting, and start() after stop() on the same instance connects again",
+        "automated: through the harness: the scan cache counts from when the scan finished and serves the next poll; an event on the stream drops it, the next poll reads the ledger at once and signals.stream.nudgedScans rises; an event during a scan makes that scan's answer stale; a stream that is down or hanging neither holds up a poll nor raises the Compass pill; no token, run or name in signals.stream",
+        "automated: the contract guard allows /events/stream as the fifth Worker route, requested verbatim (no query) from stream.mjs only",
+        "live (V-U7, with the Worker deployed from main): within 5 s of start the log reads `bot-crossing: compass — realtime: subscribed ops_run_events (GET /events/stream)`; with a poll loop keeping the cache warm, `scripts/zztest-seed.sh --one` logs `realtime: run_started on run … received — scan cache invalidated` within about 3 s and signals.stream.nudgedScans rises; the Worker's ~50 s close reconnects with Last-Event-ID and no warning",
+        "live: with WORLD_STREAM=0, signals.stream reads off with nudges and nudgedScans 0, and the world works on its polls alone",
+        "npm test green; vite build bundles the overlay; git diff $(git merge-base HEAD upstream/main) -- src/ server/api.mjs server/scan.mjs server/harnesses/claude-code.mjs empty"
       ],
       "passes": false
     },
@@ -824,7 +829,7 @@
         "automated: three concurrent polls → one ledger scan and the same answer",
         "automated: the strip notice — nothing while Compass answers or loads; what is current, old or never loaded, per source",
         "automated: the today reader, the sidecar's /spend/today, the Today line (cost, runs, unmetered, unpriced, no runs, unavailable, a stale day), Owner-only, no actor",
-        "automated: spec/ledger-cost.v1.json validates the answer the Worker's own handler gives; the adapter reads exactly four Worker routes and every Worker URL it assembles is one of them",
+        "automated: spec/ledger-cost.v1.json validates the answer the Worker's own handler gives; the adapter reads exactly five Worker routes (U7 added /events/stream, 2026-10-04) and every Worker URL it assembles is one of them",
         "live: EVENTS_URL at a closed port, then at a hanging `nc -lk 59998` → the world loads, the pill reads 'Compass unavailable · since HH:MM', signals.compass.ok false; the real URL back → the pill gone after one poll",
         "live: with Compass U5 deployed, the ZZTEST Client town card under the Owner preset reads `Today · … · N runs`, matching GET /ledger/cost?days=1&include_test=1 for that town; nothing under another preset",
         "npm test green; vite build bundles the overlay; git diff $(git merge-base HEAD upstream/main) -- src/ server/api.mjs server/scan.mjs server/harnesses/claude-code.mjs empty"

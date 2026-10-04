@@ -99,7 +99,7 @@ export function createParser({ onMessage = () => {}, onComment = () => {}, onRet
 
 /**
  * The stream client. `start()` connects (a no-op when switched off or not configured) and returns whether it is on;
- * `stop()` ends it for good; `status()` is a small record for GET /world (signals.realtime) — never the token.
+ * `stop()` ends it until the next `start()`; `status()` feeds GET /world's signals.stream (compass.mjs) — never the token.
  * `onEvent(row)` receives each `event: ledger` row; it should be cheap (the adapter only drops a cache).
  */
 export function createStream(cfg, { onEvent = () => {}, log = () => {}, warn = (...a) => console.warn(...a), now = Date.now, ...overrides } = {}) {

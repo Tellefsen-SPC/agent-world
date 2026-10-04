@@ -15,6 +15,9 @@ and streams new events as server-sent events over the events bearer, resumable w
 - It is bounded: a header deadline, 45 s of silence, a 1 MB message cap, and backoff to 60 s.
 - It never sits in front of a poll, and a stream that is down is not an outage.
 - `WORLD_STREAM=0` turns it off. The URL is derived from `EVENTS_URL` and is the contract's fifth route.
+- The scan cache counts from when the scan finishes, so the cache serves polls and the nudge is what refreshes
+  it early.
+- `GET /world` carries `signals.stream`, with `nudgedScans` as the count of what only the nudge causes.
 
 ## Consequences
 - The next poll after an event reads the ledger fresh. The page still polls every 15 s (upstream `src/`), so the
