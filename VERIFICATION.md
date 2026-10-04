@@ -82,8 +82,18 @@ See: (1) the content run's `?` is gone at the first poll and its title has dropp
 Fail looks like: a `?` persisting past a poll (check the terminal for a warning naming the read that failed); a `gate_passed` with actor other than `cowork`/a human appears (the adapter wrote — forbidden); Alpha turns `!` or vanishes.
 Cleanup: set the ZZTEST Alpha row back to Pending Approval for the next run of this check (the world re-reads it after a restart).
 
-## V-U7 — Realtime nudge — deferred, no check yet
-U7 needs a Supabase key on this machine to open a Realtime subscription — the same constraint U10 exists to route around. There is nothing to verify until that's resolved some other way. The 5 s scan cache + 15 s browser poll is the working transport in the meantime (proven by every other check in this file); a new agent or a cleared `?` shows up within one poll regardless. Revisit this check if U7 is ever un-deferred.
+## V-U7 — Realtime nudge (over the Worker's event stream)
+*Re-based 2026-10-04 by the developer under delegated authority, to ratify: U7 no longer needs a Supabase key — it listens to the Compass Worker's `GET /events/stream` (SPEC.md §4.7). Until the Worker is deployed from main, this check cannot run; the automated half is `test/stream.test.mjs` and `test/stream-harness.test.mjs`.*
+- **Setup:** the Worker deployed from main. In a terminal, with `.env` loaded: `curl -sN -m 5 -H "Authorization: Bearer $EVENTS_BEARER_TOKEN" "${EVENTS_URL}/stream" | head -2` prints `retry: 1000` and `: connected — polling every 2s`. A 404 means the Worker on Cloudflare is older than main: stop here.
+- **Do:** stop the world, start it with `DEBUG=world ./dev.sh`, open http://127.0.0.1:5274. In a second terminal run `scripts/zztest-seed.sh` (it posts the ZZTEST events). Then `curl -s 127.0.0.1:5275/world | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).signals.realtime))'`. Leave it running for two minutes. Then stop it, set `WORLD_STREAM=0` in `.env`, start `./dev.sh` again and run the same `curl`.
+- **See:**
+  - Within 5 s of the start, the log reads `realtime: subscribed ops_run_events (GET /events/stream)`.
+  - Within about 2 s of the seed posting, the log reads `realtime: run_started on run … received — scan cache invalidated` (one line per event), and the world shows the ZZTEST runs on the next poll.
+  - `signals.realtime` reads `state: 'open'` and `events` at least the number the seed posted.
+  - About every 50 s the debug log reads `the Worker closed the stream after 50 s — reconnecting in 1000 ms with Last-Event-ID`, and the stream is open again a second later. No warning is printed for these.
+  - With `WORLD_STREAM=0`: `signals.realtime` reads `state: 'off'`, nothing in the log about the stream, and the world works as before (seeded runs show within one 15 s poll).
+- **Fail looks like:** no `subscribed` line; an event that never logs `scan cache invalidated`; a "Compass unavailable" pill caused by the stream alone; a stream warning on every routine reconnect; the bearer token anywhere in the log or in `signals.realtime`.
+- **Cleanup:** remove `WORLD_STREAM=0`; `scripts/zztest-seed.sh --clean`.
 
 ## V-U9 — Worker write-gate (tellefsen-compass-mcp)
 Setup: a fresh ZZTEST Alpha run (seed script) with its gate's `ref_url` pointing at a ZZTEST Pending Approval row (Status *Pending Approval*); the Worker deployed with U9.

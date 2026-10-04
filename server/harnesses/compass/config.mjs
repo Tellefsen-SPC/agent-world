@@ -25,6 +25,13 @@ export function loadConfig(env = process.env) {
     spendUrl: eventsUrl.replace(/\/events$/, '/world/spend'),
     /** U37: today's cost per town — GET /ledger/cost (Compass U5). Same bearer, same 60 s cache. */
     ledgerCostUrl: eventsUrl.replace(/\/events$/, '/ledger/cost'),
+    /**
+     * U7: the realtime nudge — GET /events/stream on the Worker (approval layer P8): the ledger as server-sent events,
+     * same bearer. An event drops the scan cache so the next poll reads the ledger again (compass/stream.mjs). Derived
+     * only from an EVENTS_URL that ends in /events; WORLD_STREAM=0 (or off/false/no) switches it off.
+     */
+    streamUrl: /\/events$/.test(eventsUrl) ? eventsUrl.replace(/\/events$/, '/events/stream') : '',
+    streamEnabled: !/^(0|off|false|no)$/i.test(String(env.WORLD_STREAM ?? '').trim()),
     spendCacheMs: 60_000,
     spendWindowDays: 30,
     /** The overlay sidecar's loopback port (overlay-api.mjs); 0 disables it (home planet only). */

@@ -1,5 +1,6 @@
 // Agent World — U34: contract v1. The schemas validate the captured Worker responses and the packs;
-// the adapter reads exactly four Worker routes (U35 added /world/spend, ES-4.13; U37 /ledger/cost, from Compass U5).
+// the adapter reads exactly five Worker routes (U35 added /world/spend, ES-4.13; U37 /ledger/cost, from Compass U5;
+// U7 /events/stream, the ledger as server-sent events — the realtime nudge, 2026-10-04).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -71,9 +72,10 @@ const walk = (dir, out = []) => {
   }
   return out
 }
-test('U34/U35/U37: the adapter reads only /ledger/scan, /world/substrate, /world/spend and /ledger/cost — any other Worker route in server/harnesses/compass* fails', () => {
+test('U34/U35/U37/U7: the adapter reads only /ledger/scan, /world/substrate, /world/spend, /ledger/cost and /events/stream — any other Worker route in server/harnesses/compass* fails', () => {
   const files = [path.join(root, 'server/harnesses/compass.mjs'), ...walk(path.join(root, 'server/harnesses/compass'))]
-  const allowed = new Set(['/ledger/scan', '/world/substrate', '/world/spend', '/ledger/cost'])
+  const allowed = new Set(['/ledger/scan', '/world/substrate', '/world/spend', '/ledger/cost', '/events/stream'])
+  const WORKER_FIELD = /ledgerUrl|substrateUrl|spendUrl|ledgerCostUrl|streamUrl|eventsUrl/
   const hits = []
   for (const f of files) {
     const text = fs.readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
@@ -85,18 +87,26 @@ test('U34/U35/U37: the adapter reads only /ledger/scan, /world/substrate, /world
     // a Worker URL is built in config.mjs and nowhere else: no other file may touch eventsUrl or assemble one from a Worker field
     if (path.basename(f) !== 'config.mjs') {
       assert.ok(!/eventsUrl/.test(text), `${path.relative(root, f)} references eventsUrl — Worker URLs are config.mjs's to derive`)
-      assert.ok(!/(ledgerUrl|substrateUrl|spendUrl|ledgerCostUrl)\s*\.\s*(replace|slice|split|concat)\(/.test(text), `${path.relative(root, f)} rebuilds a Worker URL from a derived field`)
+      assert.ok(!/(ledgerUrl|substrateUrl|spendUrl|ledgerCostUrl|streamUrl)\s*\.\s*(replace|slice|split|concat)\(/.test(text), `${path.relative(root, f)} rebuilds a Worker URL from a derived field`)
       // U37: every Worker URL assembled anywhere — whatever it is then handed to (a variable, a retry, a cache) — is one of the reads
-      for (const m of text.matchAll(/`\$\{cfg\.(?:ledgerUrl|substrateUrl|spendUrl|ledgerCostUrl)\}[^`]*`/g)) {
+      // (U7: the stream URL is never assembled: it is requested verbatim, the resume point travels in Last-Event-ID)
+      for (const m of text.matchAll(/`\$\{cfg\.(?:ledgerUrl|substrateUrl|spendUrl|ledgerCostUrl|streamUrl)\}[^`]*`/g)) {
         const url = m[0]
         assert.ok(url.startsWith('`${cfg.ledgerUrl}?since=') || url.startsWith('`${cfg.spendUrl}?window=') || url.startsWith('`${cfg.ledgerCostUrl}?days=1'), `${path.relative(root, f)} assembles a Worker URL that is not one of the reads: ${url}`)
       }
       // every fetch of a Worker field is one of the reads, verbatim — straight to fetch, or through spend.mjs's cached(url, …) (U37)
       for (const m of text.matchAll(/(?:fetch(?:Impl)?|cached)\s*\(\s*([^,)]+)/g)) {
         const arg = m[1].trim()
-        if (!/ledgerUrl|substrateUrl|spendUrl|ledgerCostUrl|eventsUrl/.test(arg)) continue
-        assert.ok(arg === 'cfg.substrateUrl' || arg.startsWith('`${cfg.ledgerUrl}?since=') || arg.startsWith('`${cfg.spendUrl}?window=') || arg.startsWith('`${cfg.ledgerCostUrl}?days=1'), `${path.relative(root, f)} fetches a Worker URL that is not one of the three reads: ${arg}`)
+        if (!WORKER_FIELD.test(arg)) continue
+        assert.ok(arg === 'cfg.substrateUrl' || arg.startsWith('`${cfg.ledgerUrl}?since=') || arg.startsWith('`${cfg.spendUrl}?window=') || arg.startsWith('`${cfg.ledgerCostUrl}?days=1'), `${path.relative(root, f)} fetches a Worker URL that is not one of the reads: ${arg}`)
       }
+      // U7: a request made with node:http(s) — .get( / .request( — on a Worker field is the stream, verbatim, and only from stream.mjs
+      for (const m of text.matchAll(/\.(?:get|request)\s*\(\s*([^,)]+)/g)) {
+        const arg = m[1].trim()
+        if (!WORKER_FIELD.test(arg)) continue
+        assert.ok(arg === 'cfg.streamUrl' && path.basename(f) === 'stream.mjs', `${path.relative(root, f)} requests a Worker URL that is not the stream, verbatim: ${arg}`)
+      }
+      assert.ok(!/\b(?:http|https)\.request\s*\(/.test(text), `${path.relative(root, f)} uses http.request — the adapter's one node:http call is the stream's GET`)
     }
     for (const m of text.matchAll(/\/(?:ledger|world|ask|actions|events)(?:\/[a-z0-9_-]+)?\b/g)) {
       const route = m[0]
