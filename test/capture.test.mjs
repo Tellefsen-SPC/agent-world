@@ -36,9 +36,20 @@ async function fakeWorker(answer) {
   return { requests, url: `http://127.0.0.1:${server.address().port}/events`, close: () => new Promise((r) => server.close(r)) }
 }
 
-test('--cost-only captures GET /ledger/cost?days=1&include_test=1 into ledger-cost.live.json: GET only, the bearer in the header and nowhere else, real town names replaced', { timeout: 20000 }, async () => {
+test('--cost-only captures GET /ledger/cost?days=1&include_test=1 into ledger-cost.live.json: GET only, the bearer in the header and nowhere else, and no real place name anywhere in the file', { timeout: 20000 }, async () => {
+  // The Worker's own shape (tellefsen-compass-mcp src/lib/ledger-row-endpoints.ts on main): by_town[] and by_town_day[],
+  // each row naming its town — plus two things a later Worker might add: a string field nobody listed, and an object
+  // keyed by a name. Only keys known to be safe keep their strings; every other string and every unknown key is replaced.
   const synthetic = read('test/fixtures/ledger-cost.synthetic.json')
-  const answer = { ...synthetic, by_town: [...synthetic.by_town, { ...synthetic.by_town[0], town: 'Real Client Trading LLC' }] }
+  const REAL = ['Real Client Trading LLC', 'Another Real Co', 'Hidden Name GmbH', 'Tellefsen Venture One']
+  const row = synthetic.by_town[0]
+  const day = synthetic.by_town_day[0]
+  const answer = {
+    ...synthetic,
+    by_town: [...synthetic.by_town, { ...row, town: REAL[0] }, { ...row, town: REAL[3] }],
+    by_town_day: [...synthetic.by_town_day, { ...day, town: REAL[0] }, { ...day, town: REAL[3], client_label: REAL[1] }],
+    extra: { [REAL[2]]: { cost_usd: 1 } },
+  }
   const w = await fakeWorker((req) => (req.url.startsWith('/ledger/cost') ? [200, answer] : [404, { error: 'no' }]))
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-capture-'))
   try {
@@ -48,16 +59,24 @@ test('--cost-only captures GET /ledger/cost?days=1&include_test=1 into ledger-co
     assert.deepEqual(w.requests, [{ method: 'GET', url: '/ledger/cost?days=1&include_test=1', auth: `Bearer ${BEARER}` }], 'one GET, nothing else read')
     assert.ok(!out.includes(BEARER), 'the bearer is never printed')
     assert.match(out, /cost captured: \d+ runs, \d+ towns/)
-    const file = path.join(dir, 'ledger-cost.live.json')
+    assert.match(out, /3 unknown keys renamed/, 'an unknown key is reported, so a contract change is not missed')
     assert.deepEqual(fs.readdirSync(dir), ['ledger-cost.live.json'], 'only the cost capture is written')
-    const got = JSON.parse(fs.readFileSync(file, 'utf8'))
-    assert.deepEqual(validate(read('spec/ledger-cost.v1.json'), got), [], 'the capture is what the contract test validates')
+    const text = fs.readFileSync(path.join(dir, 'ledger-cost.live.json'), 'utf8')
+    for (const name of REAL) assert.ok(!text.includes(name), `${name} does not land in a public fixture`)
+    assert.ok(!/Real|Hidden|Another|Venture/.test(text), 'not even a fragment')
+    const got = JSON.parse(text)
+    const { extra: _e, ...shape } = got
+    assert.deepEqual(validate(read('spec/ledger-cost.v1.json'), shape), [], 'the capture is what the contract test validates')
     assert.match(got.note, /GET \/ledger\/cost\?days=1&include_test=1 captured \d{4}-\d{2}-\d{2}/)
+    // ZZTEST towns and internal are kept; each real town has one stand-in, the same in by_town and by_town_day
     const towns = got.by_town.map((r) => r.town)
-    assert.ok(towns.includes('ZZTEST Client') && towns.includes('internal'), 'ZZTEST towns and internal are kept')
-    assert.ok(!JSON.stringify(got).includes('Real Client Trading'), 'a real town name does not land in a public fixture')
-    assert.ok(towns.includes('town-1'))
-    assert.deepEqual(got.totals, synthetic.totals, 'the figures are the Worker\'s, untouched')
+    assert.deepEqual(towns, ['ZZTEST Client', 'internal', 'ZZTEST Idle', 'town-1', 'town-2'])
+    assert.deepEqual(got.by_town_day.map((r) => r.town), ['ZZTEST Client', 'ZZTEST Idle', 'internal', 'town-1', 'town-2'])
+    assert.equal(got.by_town_day[4].client_label, undefined, 'an unknown key does not keep its name')
+    // the figures, the day, the times and the enums are the Worker's, untouched
+    assert.deepEqual(got.totals, synthetic.totals)
+    assert.deepEqual(got.by_town_day.map((r) => r.day), answer.by_town_day.map((r) => r.day))
+    for (const k of ['at', 'days', 'since', 'pricing_version', 'town_source', 'excluded_test_runs']) assert.deepEqual(got[k], synthetic[k], k)
   } finally {
     await w.close()
     fs.rmSync(dir, { recursive: true, force: true })

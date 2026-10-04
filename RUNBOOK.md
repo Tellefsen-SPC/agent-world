@@ -124,7 +124,8 @@ That refreshes the client map, spend and a ledger sample. For one of them only, 
 scripts/capture-contract.sh --cost-only
 ```
 
-Until then that command says "is Compass U5 deployed?" and writes nothing. Then:
+Until then that command says "is Compass U5 deployed?" and writes nothing. It replaces every town name except the
+ZZTEST ones with `town-1`, `town-2` …, and it warns if Compass sent something it does not recognise. Then:
 
 ```
 npm test

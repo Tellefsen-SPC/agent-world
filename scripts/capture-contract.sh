@@ -6,7 +6,9 @@
 #   --spend-only       GET /world/spend?window=30 alone (U35W)
 #   --cost-only        GET /ledger/cost?days=1&include_test=1 alone (Compass U5, U37) → test/fixtures/ledger-cost.live.json.
 #                      Run it once U5 is deployed; until then the contract test validates the synthetic answer only.
-#                      Town names other than ZZTEST… and "internal" are replaced by town-1, town-2 … (the repo is public).
+#                      Only strings under keys known to be safe (at, since, pricing_version, town_source, day) are kept;
+#                      every town but ZZTEST… and "internal" becomes town-1, town-2 … in by_town and by_town_day alike,
+#                      any other string redacted-n, and an unknown key is renamed and reported (the repo is public).
 # CAPTURE_DIR overrides where the files go (default test/fixtures). CAPTURE_SKIP_DOTENV=1 leaves .env unread — the
 # tests use both, with a local stand-in for the Worker; nothing here is ever pointed at the real Worker by a test.
 set -euo pipefail
@@ -26,14 +28,27 @@ if [ "$ONLY" = "--cost-only" ]; then
   BODY=$(curl -sf -H "Authorization: Bearer $EVENTS_BEARER_TOKEN" "$W/ledger/cost?days=1&include_test=1") \
     || { echo "GET /ledger/cost did not answer 200 — is Compass U5 deployed? Nothing written." >&2; exit 1; }
   printf '%s' "$BODY" | node -e '
+// Allow-list, not a name hunt: a string survives only under a key known to carry no place or person (times, the day,
+// the pricing version, the town_source enum). Every other string is replaced — a town by town-n (the same stand-in
+// wherever it appears, by_town and by_town_day alike), anything else by redacted-n; ZZTEST… and "internal" are kept.
+// A key the contract does not name is renamed (it may itself be a name) and reported: the answer has changed.
+const SAFE_STRINGS=new Set(["at","since","pricing_version","town_source","day"])
+const KNOWN_KEYS=new Set(["at","days","since","pricing_version","town_source","excluded_test_runs","totals","by_town","by_town_day","day","town","runs_total","runs_metered","runs_unmetered","runs_unpriced","tokens_in","tokens_out","tokens_unpriced","cost_usd","methods","breakdown","flat"])
+const names=new Map();const count={town:0,redacted:0};let unknown=0
+const stand=(s,kind)=>{if(/^zztest/i.test(s)||s==="internal")return s;if(!names.has(s))names.set(s,`${kind}-${++count[kind]}`);return names.get(s)}
+const clean=(v,key)=>{
+  if(Array.isArray(v))return v.map(x=>clean(x,key))
+  if(v&&typeof v==="object"){const o={};for(const [k,x] of Object.entries(v)){const known=KNOWN_KEYS.has(k);if(!known)unknown++;o[known?k:`unknown-key-${unknown}`]=clean(x,known?k:"")}return o}
+  if(typeof v==="string")return SAFE_STRINGS.has(key)?v:stand(v,key==="town"?"town":"redacted")
+  return v
+}
 let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
   const j=JSON.parse(s)
   if(!Array.isArray(j.by_town)){console.error("GET /ledger/cost answered without by_town — not written");process.exit(1)}
-  const names=new Map()
-  const town=(t)=>/^zztest/i.test(t)||t==="internal"?t:(names.has(t)?names.get(t):(names.set(t,`town-${names.size+1}`),names.get(t)))
-  const out={note:`GET /ledger/cost?days=1&include_test=1 captured ${process.argv[1]} for the contract test (U37, Compass U5). Town names other than ZZTEST and internal replaced. Re-capture with scripts/capture-contract.sh --cost-only.`,...j,by_town:j.by_town.map(r=>({...r,town:town(String(r.town))}))}
+  const out={note:`GET /ledger/cost?days=1&include_test=1 captured ${process.argv[1]} for the contract test (U37, Compass U5). Every string outside at, since, pricing_version, town_source and day replaced: towns other than ZZTEST and internal by town-n, anything else by redacted-n; unknown keys renamed. Re-capture with scripts/capture-contract.sh --cost-only.`,...clean(j,"")}
   require("fs").writeFileSync(process.argv[2],JSON.stringify(out,null,1)+"\n")
-  console.log("cost captured:",j.totals?.runs_total,"runs,",j.by_town.length,"towns")
+  console.log("cost captured:",j.totals?.runs_total,"runs,",j.by_town.length,"towns,",count.town,"town names replaced")
+  if(unknown)console.error(`warning: ${unknown} unknown keys renamed — the Worker answer has changed; check spec/ledger-cost.v1.json`)
 })' "$STAMP" "$OUT/ledger-cost.live.json"
   exit 0
 fi
