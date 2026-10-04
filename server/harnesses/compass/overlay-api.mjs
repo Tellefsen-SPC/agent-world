@@ -25,7 +25,7 @@
  * a local Origin. Nothing here touches a token.
  *
  * Who is asking: `viewerFor(req)` returns the viewer for this request (viewer.mjs). Today the adapter hands back its one
- * viewer from WORLD_VIEWER_PRESET; at M3 the identity comes from Cloudflare Access (ADR 0006) and only viewerFor changes.
+ * viewer from WORLD_VIEWER_PRESET; at M3 the identity comes from the hosted world's sign-in (Cloudflare Access is proposed: ADR 0006, D10, to ratify) and only viewerFor changes.
  * The server decides what a viewer may have — the overlay's own checks (overlay/spend.mjs showSpend) are a second line,
  * never the only one. No viewer, or one that cannot be resolved, is refused: the gates fail closed.
  */
