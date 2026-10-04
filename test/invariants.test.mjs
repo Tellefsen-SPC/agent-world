@@ -20,9 +20,15 @@ test('src/ is byte-identical to upstream/main', () => {
     assert.fail('no upstream/main — add the remote: git remote add upstream https://github.com/jarrenrocks/bot-crossing && git fetch upstream')
   }
   assert.ok(ref)
-  const diff = sh('git diff --stat upstream/main -- src/')
+  // Against the upstream commit this fork is built on — the merge base — not
+  // upstream's tip: upstream moving on is not the fork editing src/, and the
+  // tip made this test fail for everyone the day upstream committed anything.
+  const diff = sh(`git diff --stat ${forkBase()} -- src/`)
   assert.equal(diff, '', `src/ differs from upstream:\n${diff}`)
 })
+
+/** The upstream commit the fork is built on. Merging upstream moves it forward. */
+const forkBase = () => sh('git merge-base HEAD upstream/main')
 
 const walk = (dir, out = []) => {
   for (const name of fs.readdirSync(dir)) {
@@ -91,7 +97,7 @@ test('harness registry is exactly [compass]', async () => {
 })
 
 test('never-touch files are unchanged vs upstream', () => {
-  const diff = sh('git diff --stat upstream/main -- server/scan.mjs server/api.mjs server/harnesses/claude-code.mjs')
+  const diff = sh(`git diff --stat ${forkBase()} -- server/scan.mjs server/api.mjs server/harnesses/claude-code.mjs`)
   assert.equal(diff, '', `never-touch files differ from upstream:\n${diff}`)
 })
 

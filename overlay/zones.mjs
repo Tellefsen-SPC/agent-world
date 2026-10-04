@@ -139,6 +139,15 @@ export async function loadSpend(window = 30, includeTest = false) {
     return null
   }
 }
+/** U37 — today's cost per town (the sidecar's /spend/today, from Compass's GET /ledger/cost?days=1); null when the sidecar is not there. */
+export async function loadSpendToday(includeTest = false) {
+  try {
+    const res = await fetch(`${SIDECAR}/spend/today${includeTest ? '?include_test=1' : ''}`, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(30_000) })
+    return res.ok ? await res.json() : null
+  } catch {
+    return null
+  }
+}
 /** The rooms the sidecar declares (the pack's, with ring and spoke) — the plots the room panels hang off. */
 export const rooms = () => world?.rooms || []
 

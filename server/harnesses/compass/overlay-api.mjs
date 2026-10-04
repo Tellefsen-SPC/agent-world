@@ -13,6 +13,7 @@
  *   GET  /rooms/<id>               one room's panel
  *   GET  /archive                  { at, shelves, byProject, missing } — the archive shelves (U32), 5-min caches
  *   GET  /spend[?window=n&include_test=1]  the Worker's GET /world/spend object (U35), 60-s cache per window; the overlay folds it
+ *   GET  /spend/today[?include_test=1]     today's cost per town — the Worker's GET /ledger/cost?days=1 (U37, from Compass U5)
  *   GET  /planets/<key>/state      that planet's data/colony.<key>.json — created empty on first read
  *   PUT  /planets/<key>/state      write it (same field whitelist as api.mjs; the browser is the one writer)
  *
@@ -147,6 +148,11 @@ export function createOverlayApi({ getWorld, descriptor, steering = null, rooms 
         return panel ? send(200, panel) : send(404, { error: 'No such room' })
       }
       if (url.pathname === '/archive' && req.method === 'GET') return archive ? send(200, await archive.shelf()) : send(404, { error: 'No archive on this adapter' })
+      if (url.pathname === '/spend/today' && req.method === 'GET') {
+        // U37: today's cost per town, read as /spend is (60-s cache, last good kept); a town card draws its line from it
+        if (!spend?.today) return send(404, { error: "No today's cost on this adapter" })
+        return send(200, await spend.today({ includeTest: url.searchParams.get('include_test') === '1' }))
+      }
       if (url.pathname === '/spend' && req.method === 'GET') {
         // U35: the Worker's spend object as read (60-s cache per window); include_test=1 keeps the zztest-% rows in, as the Worker does
         if (!spend) return send(404, { error: 'No spend on this adapter' })

@@ -8,19 +8,23 @@
  * Never a PATCH, PUT or DELETE. Never a body on a GET. Tokens stay in cfg.
  */
 import { isAllowed } from './notion-sources.mjs'
+import { withTimeout } from './health.mjs'
 
 export const NOTION_VERSION = '2025-09-03'
 
-export function createNotion(cfg, { fetchImpl = globalThis.fetch, env = process.env } = {}) {
+export function createNotion(cfg, { fetchImpl: rawFetch = globalThis.fetch, env = process.env } = {}) {
+  const fetchImpl = withTimeout(rawFetch, cfg.readTimeoutMs ?? 10_000) // U37: a deadline on every read
   const headers = () => {
     if (!cfg.notionToken) throw Object.assign(new Error('NOTION_TOKEN is not set in .env'), { status: 0 })
     return { Authorization: `Bearer ${cfg.notionToken}`, 'Notion-Version': NOTION_VERSION }
   }
   const fail = (res, json, what) => Object.assign(new Error(json.message || json.code || `notion ${res.status} on ${what}`), { status: res.status, code: json.code || '' })
 
+  // U37: a 200's body is the answer — one that fails or runs past its deadline is an error, never an empty
+  // success. Only an error response's body is optional (it may carry the reason, or nothing).
   async function get(path) {
     const res = await fetchImpl(`https://api.notion.com/v1/${path}`, { headers: headers() })
-    const json = await res.json().catch(() => ({}))
+    const json = (res.ok ? await res.json() : await res.json().catch(() => ({})))
     if (!res.ok) throw fail(res, json, path)
     return json
   }
@@ -32,7 +36,7 @@ export function createNotion(cfg, { fetchImpl = globalThis.fetch, env = process.
     const init = { headers: { ...headers(), 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
     init.method = 'POST' // the allowed line: a data-source query, on an allowed id, and nothing else
     const res = await fetchImpl(`https://api.notion.com/v1/data_sources/${id}/query`, init)
-    const json = await res.json().catch(() => ({}))
+    const json = (res.ok ? await res.json() : await res.json().catch(() => ({})))
     if (!res.ok) throw fail(res, json, `data_sources/${id.slice(0, 8)}…/query`)
     return json
   }

@@ -10,9 +10,15 @@
  * a minute) — the same discipline as the substrate read. With nothing ever read, `read()` returns EMPTY with the
  * error named, so a panel can say why its line is missing instead of printing zeros.
  *
- * Annex III: costs aggregate by client, skill and model only; the response carries no per-person field and this
+ * U37 — today's cost per town: `today()` reads GET /ledger/cost?days=1 (Compass U5), the UTC day so far, priced by the
+ * same code as /world/spend, grouped by town (ops_skill_runs.town, else the client — town_source says which). Same
+ * cache, same last-good discipline; an answer without a by_town list is refused as malformed, not shown as zeros.
+ *
+ * Annex III: costs aggregate by client, town, skill and model only; the responses carry no per-person field and this
  * module names none (npm test greps it).
  */
+import { withTimeout } from './health.mjs'
+
 export const KEYS = Object.freeze(['at', 'window_days', 'pricing_version', 'pricing_verified', 'estimates_version', 'excluded_test_runs', 'display', 'totals', 'by_client', 'by_skill', 'by_client_skill', 'by_model'])
 export const EMPTY = Object.freeze({ at: '', window_days: null, pricing_version: '', pricing_verified: '', estimates_version: '', excluded_test_runs: 0, display: null, totals: null, by_client: [], by_skill: [], by_client_skill: [], by_model: [], error: '' })
 
@@ -46,38 +52,79 @@ export function windowParam(v, fallback = 30) {
   return Number.isInteger(n) && n >= 1 && n <= 365 ? n : fallback
 }
 
-export function createSpend(cfg, { fetchImpl = globalThis.fetch, log = () => {}, now = Date.now } = {}) {
-  const cache = new Map() // `${window}:${includeTest}` → { at, value }
-  let warnedAt = 0
+export const TODAY_EMPTY = Object.freeze({ at: '', days: null, since: '', pricing_version: '', town_source: '', excluded_test_runs: 0, totals: null, by_town: [], error: '' })
 
-  async function read({ window, includeTest = false } = {}) {
-    const w = windowParam(window, cfg.spendWindowDays || 30)
-    const key = `${w}:${includeTest ? 1 : 0}`
+/** U37: only the keys the day's answer needs; a by_town row must name its town. */
+export function normaliseToday(body) {
+  const b = obj(body) || {}
+  return {
+    at: typeof b.at === 'string' ? b.at : '',
+    days: Number.isInteger(b.days) ? b.days : null,
+    since: typeof b.since === 'string' ? b.since : '',
+    pricing_version: typeof b.pricing_version === 'string' ? b.pricing_version : '',
+    town_source: b.town_source === 'town' || b.town_source === 'client' ? b.town_source : '',
+    excluded_test_runs: Number.isInteger(b.excluded_test_runs) ? b.excluded_test_runs : 0,
+    totals: obj(b.totals),
+    by_town: arr(b.by_town).filter((r) => typeof r.town === 'string' && r.town.trim()),
+    error: '',
+  }
+}
+
+export function createSpend(cfg, { fetchImpl: rawFetch = globalThis.fetch, log = () => {}, now = Date.now } = {}) {
+  const fetchImpl = withTimeout(rawFetch, cfg.readTimeoutMs ?? 10_000) // U37: a deadline on every read
+  const cache = new Map() // `${window}:${includeTest}` → { at, value }; U37: `today:${includeTest}` for the day's cost
+  const warnedAt = new Map()
+
+  /** One Worker read behind the cache: fresh for spendCacheMs, the last good answer kept on a failure, EMPTY + error with none. */
+  async function cached(url, key, { what, empty, normaliseBody, valid = () => true, describe }) {
     const have = cache.get(key)
     if (have?.value && now() - have.at < cfg.spendCacheMs) return have.value
-    const query = `${encodeURIComponent(String(w))}${includeTest ? '&include_test=1' : ''}`
     try {
-      const res = await fetchImpl(`${cfg.spendUrl}?window=${query}`, {
+      const res = await fetchImpl(url, {
         headers: { Authorization: `Bearer ${cfg.eventsBearerToken}`, Accept: 'application/json' },
       })
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
-        throw new Error(`spend read ${res.status}${body?.error ? `: ${body.error}` : ''}`)
+        throw new Error(`${what} read ${res.status}${body?.error ? `: ${body.error}` : ''}`)
       }
-      const value = normalise(await res.json())
+      const body = await res.json()
+      if (!valid(body)) throw new Error(`${what} read: the answer is not the shape the contract names`)
+      const value = normaliseBody(body)
       cache.set(key, { at: now(), value })
-      log(`spend ${w}d${includeTest ? ' +test' : ''}: ${value.totals?.runs_total ?? '?'} runs, ${value.totals?.runs_metered ?? '?'} metered, ${value.by_client.length} clients, ${value.by_skill.length} skills`)
+      log(describe(value))
       return value
     } catch (err) {
-      if (now() - warnedAt > 60_000) {
-        warnedAt = now()
-        console.warn('bot-crossing: compass — spend unavailable —', err?.message || err)
+      if (now() - (warnedAt.get(what) ?? 0) > 60_000) {
+        warnedAt.set(what, now())
+        console.warn(`bot-crossing: compass — ${what} unavailable —`, err?.message || err)
       }
-      if (!have?.value) return { ...EMPTY, error: err?.message || String(err) }
+      if (!have?.value) return { ...empty, error: err?.message || String(err) }
       have.at = now() // keep the last good answer; try again after the cache period
       return have.value
     }
   }
 
-  return { read, _cache: () => cache }
+  function read({ window, includeTest = false } = {}) {
+    const w = windowParam(window, cfg.spendWindowDays || 30)
+    const query = `${encodeURIComponent(String(w))}${includeTest ? '&include_test=1' : ''}`
+    return cached(`${cfg.spendUrl}?window=${query}`, `${w}:${includeTest ? 1 : 0}`, {
+      what: 'spend',
+      empty: EMPTY,
+      normaliseBody: normalise,
+      describe: (value) => `spend ${w}d${includeTest ? ' +test' : ''}: ${value.totals?.runs_total ?? '?'} runs, ${value.totals?.runs_metered ?? '?'} metered, ${value.by_client.length} clients, ${value.by_skill.length} skills`,
+    })
+  }
+
+  /** U37 — today's cost per town (GET /ledger/cost?days=1). */
+  function today({ includeTest = false } = {}) {
+    return cached(`${cfg.ledgerCostUrl}?days=1${includeTest ? '&include_test=1' : ''}`, `today:${includeTest ? 1 : 0}`, {
+      what: "today's cost",
+      empty: TODAY_EMPTY,
+      normaliseBody: normaliseToday,
+      valid: (body) => Boolean(obj(body)) && Array.isArray(body.by_town),
+      describe: (value) => `today's cost${includeTest ? ' +test' : ''}: ${value.totals?.runs_total ?? '?'} runs, ${value.by_town.length} towns (by ${value.town_source || '?'})`,
+    })
+  }
+
+  return { read, today, _cache: () => cache }
 }

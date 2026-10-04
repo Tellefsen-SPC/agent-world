@@ -1,0 +1,119 @@
+{
+  "at": "2026-10-04T09:00:00.000Z",
+  "days": 1,
+  "since": "2026-10-04T00:00:00.000Z",
+  "pricing_version": "zztest-1",
+  "town_source": "town",
+  "excluded_test_runs": 0,
+  "totals": {
+    "runs_total": 3,
+    "runs_metered": 2,
+    "runs_unmetered": 1,
+    "runs_unpriced": 0,
+    "tokens_in": 160000,
+    "tokens_out": 10000,
+    "tokens_unpriced": 0,
+    "cost_usd": 0.36,
+    "methods": {
+      "breakdown": 1,
+      "flat": 1
+    }
+  },
+  "by_town": [
+    {
+      "town": "ZZTEST Client",
+      "runs_total": 1,
+      "runs_metered": 1,
+      "runs_unmetered": 0,
+      "runs_unpriced": 0,
+      "tokens_in": 120000,
+      "tokens_out": 8000,
+      "tokens_unpriced": 0,
+      "cost_usd": 0.21,
+      "methods": {
+        "breakdown": 1,
+        "flat": 0
+      }
+    },
+    {
+      "town": "internal",
+      "runs_total": 1,
+      "runs_metered": 1,
+      "runs_unmetered": 0,
+      "runs_unpriced": 0,
+      "tokens_in": 40000,
+      "tokens_out": 2000,
+      "tokens_unpriced": 0,
+      "cost_usd": 0.15,
+      "methods": {
+        "breakdown": 0,
+        "flat": 1
+      }
+    },
+    {
+      "town": "ZZTEST Idle",
+      "runs_total": 1,
+      "runs_metered": 0,
+      "runs_unmetered": 1,
+      "runs_unpriced": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "tokens_unpriced": 0,
+      "cost_usd": 0,
+      "methods": {
+        "breakdown": 0,
+        "flat": 0
+      }
+    }
+  ],
+  "by_town_day": [
+    {
+      "day": "2026-10-04",
+      "town": "ZZTEST Client",
+      "runs_total": 1,
+      "runs_metered": 1,
+      "runs_unmetered": 0,
+      "runs_unpriced": 0,
+      "tokens_in": 120000,
+      "tokens_out": 8000,
+      "tokens_unpriced": 0,
+      "cost_usd": 0.21,
+      "methods": {
+        "breakdown": 1,
+        "flat": 0
+      }
+    },
+    {
+      "day": "2026-10-04",
+      "town": "ZZTEST Idle",
+      "runs_total": 1,
+      "runs_metered": 0,
+      "runs_unmetered": 1,
+      "runs_unpriced": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "tokens_unpriced": 0,
+      "cost_usd": 0,
+      "methods": {
+        "breakdown": 0,
+        "flat": 0
+      }
+    },
+    {
+      "day": "2026-10-04",
+      "town": "internal",
+      "runs_total": 1,
+      "runs_metered": 1,
+      "runs_unmetered": 0,
+      "runs_unpriced": 0,
+      "tokens_in": 40000,
+      "tokens_out": 2000,
+      "tokens_unpriced": 0,
+      "cost_usd": 0.15,
+      "methods": {
+        "breakdown": 0,
+        "flat": 1
+      }
+    }
+  ]
+}

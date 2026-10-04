@@ -35,6 +35,7 @@ import { PANEL_MS } from './surfaces.mjs'
 import { DECISIONS, envSources, unreadableNote } from './notion-sources.mjs'
 import { titleOf, selectName, dateStart, multiNames, relationIds } from './notion.mjs'
 import { researchRow, needsRefresh, integrationRow, isDriftOpen, isUnchecked } from './notion-rows.mjs'
+import { withTimeout } from './health.mjs'
 
 const DAY_MS = 24 * 3600 * 1000
 const str = (v) => (typeof v === 'string' ? v.trim() : '')
@@ -177,7 +178,8 @@ export function financeBuckets(records, now = Date.now()) {
   return { month, ...out }
 }
 
-export function createRooms(cfg, { surfaces, substrate, steering, pack, lastScan, log = () => {}, fetchImpl = globalThis.fetch, now = Date.now } = {}) {
+export function createRooms(cfg, { surfaces, substrate, steering, pack, lastScan, log = () => {}, fetchImpl: rawFetch = globalThis.fetch, now = Date.now } = {}) {
+  const fetchImpl = withTimeout(rawFetch, cfg.readTimeoutMs ?? 10_000) // U37: a deadline on every read
   const env = envSources()
   const packNow = () => (typeof pack === 'function' ? pack() : pack)
   const scan = () => (typeof lastScan === 'function' ? lastScan() : null) || { runs: new Map(), threads: [], projects: [], silent: [], live: new Set(), failed: new Set() }
@@ -187,7 +189,7 @@ export function createRooms(cfg, { surfaces, substrate, steering, pack, lastScan
     surfaces.stale('finance-table', 60 * 60_000, async () => {
       if (!cfg.airtableToken) throw new Error('AIRTABLE_TOKEN is not set in .env')
       const res = await fetchImpl(`https://api.airtable.com/v0/meta/bases/${cfg.airtableBaseId}/tables`, { headers: { Authorization: `Bearer ${cfg.airtableToken}` } })
-      const body = await res.json().catch(() => ({}))
+      const body = (res.ok ? await res.json() : await res.json().catch(() => ({})))
       if (!res.ok) throw new Error(`airtable meta ${res.status}: ${body.error?.type || ''}`.trim())
       const t = (body.tables || []).find((x) => /^finance$/i.test(x.name))
       if (!t) throw new Error('no table named Finance in the base')

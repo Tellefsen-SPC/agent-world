@@ -343,3 +343,78 @@ test('U36: the live capture — estimates_version rides through the reader; Peop
   assert.equal(estLineFor(fold.campus, opts), estLineFor(fold.planet, opts), 'the campus: the same totals.est')
   assert.ok(!/actor/i.test(fs.readFileSync(path.join(root, 'overlay/spend.mjs'), 'utf8')))
 })
+
+// ── U37: today's cost per town (Compass U5's GET /ledger/cost?days=1) ──────────────────────────
+
+const TODAY = Object.freeze({
+  at: '2026-10-04T09:00:00.000Z', days: 1, since: '2026-10-04T00:00:00.000Z', pricing_version: 'test', town_source: 'client', excluded_test_runs: 0,
+  totals: b({ runs_total: 3, runs_metered: 2, cost_usd: 1.25 }),
+  by_town: [b({ town: 'ZZTEST Client', runs_total: 3, runs_metered: 2, runs_unmetered: 1, cost_usd: 1.25 }), b({ town: 'ZZTEST Idle', runs_total: 1, runs_metered: 0, runs_unmetered: 1 })],
+  by_town_day: [{ stray: 'not read' }],
+})
+
+test('U37: the today reader — GET /ledger/cost?days=1 with the bearer, cached, the error named on a 404 (not deployed yet) or a malformed answer, the last good kept', async () => {
+  const { createSpend, normaliseToday } = await import(path.join(root, 'server/harnesses/compass/spend.mjs'))
+  const { loadConfig } = await import(path.join(root, 'server/harnesses/compass/config.mjs'))
+  const cfg = loadConfig({ EVENTS_URL: 'https://w.example/events', EVENTS_BEARER_TOKEN: 't' })
+  assert.equal(cfg.ledgerCostUrl, 'https://w.example/ledger/cost')
+  let clock = 1_000_000
+  const calls = []
+  let answer = () => ({ ok: true, status: 200, json: async () => TODAY })
+  const fetchImpl = async (url, init) => (calls.push(url), assert.equal(init.headers.Authorization, 'Bearer t'), answer())
+  const spend = createSpend(cfg, { fetchImpl, now: () => clock })
+  const first = await spend.today()
+  assert.equal(calls[0], 'https://w.example/ledger/cost?days=1')
+  assert.equal(first.by_town.length, 2); assert.ok(!('by_town_day' in first)); assert.equal(first.error, '')
+  await spend.today()
+  assert.equal(calls.length, 1, 'cached for a minute')
+  await spend.today({ includeTest: true })
+  assert.equal(calls.at(-1), 'https://w.example/ledger/cost?days=1&include_test=1')
+  clock += 61_000
+  answer = () => ({ ok: false, status: 502, json: async () => ({ error: 'supabase read failed' }) })
+  assert.equal((await spend.today()).by_town.length, 2, 'the last good answer survives a failed read')
+
+  answer = () => ({ ok: false, status: 404, json: async () => ({ error: 'Not found' }) })
+  const notYet = await createSpend(cfg, { fetchImpl, now: () => clock }).today()
+  assert.deepEqual(notYet.by_town, []); assert.match(notYet.error, /today's cost read 404: Not found/)
+  answer = () => ({ ok: true, status: 200, json: async () => [] })
+  assert.match((await createSpend(cfg, { fetchImpl, now: () => clock }).today()).error, /not the shape the contract names/)
+  assert.deepEqual(normaliseToday({ by_town: [{ town: '' }, { town: 'A', cost_usd: 1 }, 'x'] }).by_town, [{ town: 'A', cost_usd: 1 }])
+})
+
+test('U37: the sidecar serves GET /spend/today from the reader, 404 without it', async () => {
+  const http = await import('node:http')
+  const { createOverlayApi, startOverlayApi } = await import(path.join(root, 'server/harnesses/compass/overlay-api.mjs'))
+  const world = { planets: [{ key: 'zz', home: true }], towns: [], campus: { name: 'ZZ' } }
+  const get = (port, p) => new Promise((resolve, reject) => http.get({ host: '127.0.0.1', port, path: p }, (res) => { let s = ''; res.on('data', (c) => (s += c)); res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(s || '{}') })) }).on('error', reject))
+  const spend = { read: async () => ({}), today: async ({ includeTest } = {}) => ({ at: 'x', includeTest: Boolean(includeTest), by_town: [] }) }
+  const api = await startOverlayApi(createOverlayApi({ getWorld: async () => world, descriptor: async () => world, spend }), { port: 0 })
+  assert.deepEqual((await get(api.port, '/spend/today')).body, { at: 'x', includeTest: false, by_town: [] })
+  assert.deepEqual((await get(api.port, '/spend/today?include_test=1')).body, { at: 'x', includeTest: true, by_town: [] })
+  await api.close()
+  const old = await startOverlayApi(createOverlayApi({ getWorld: async () => world, descriptor: async () => world, spend: { read: async () => ({}) } }), { port: 0 })
+  assert.equal((await get(old.port, '/spend/today')).status, 404)
+  await old.close()
+})
+
+test('U37: a town card reads today\'s line — cost and runs, unmetered and none said plainly, unavailable when the read failed, Owner-only, never per person', async () => {
+  const { todayLine, todayLineFor, todayRowFor } = await import(path.join(root, 'overlay/spend.mjs'))
+  const { loadPack } = await import(path.join(root, 'server/harnesses/compass/pack.mjs'))
+  const campus = loadPack('tellefsen-campus'); const neutral = loadPack('neutral')
+  const opts = { viewer: owner, pack: campus, fold: null, now: Date.parse('2026-10-04T09:30:00Z') }
+  assert.equal(todayLineFor(TODAY, 'ZZTEST Client', opts), 'Today · $1.25 · 3 runs · 1 unmetered')
+  assert.equal(todayLineFor(TODAY, 'ZZTEST Idle', opts), 'Today · unmetered · 1 run')
+  assert.equal(todayLineFor(TODAY, 'ZZTEST Nowhere', opts), 'Today · no runs')
+  assert.equal(todayLineFor({ ...TODAY, by_town: [], error: "today's cost read 404" }, 'ZZTEST Client', opts), 'Today · unavailable')
+  assert.equal(todayLineFor(null, 'ZZTEST Client', opts), '', 'nothing read yet: no line')
+  for (const viewer of [{ preset: 'operator' }, { preset: 'client' }, null]) assert.equal(todayLineFor(TODAY, 'ZZTEST Client', { ...opts, viewer }), '')
+  assert.equal(todayLineFor(TODAY, 'ZZTEST Client', { ...opts, pack: neutral }), '')
+  assert.equal(todayLine(todayRowFor(TODAY, 'ZZTEST Client'), { currency: 'OMR', omrPerUsd: 0.3845 }), 'Today · 0.481 OMR · 3 runs · 1 unmetered')
+  // An unpriced run (a model MODEL_PRICING does not name) is said on the line, as the 30-day line says it: never silently short.
+  assert.equal(todayLine(b({ town: 'X', runs_total: 3, runs_metered: 3, runs_unpriced: 1, cost_usd: 0.21 })), 'Today · $0.21 · 3 runs · 1 unpriced')
+  // A kept answer from an earlier UTC day is not today's cost.
+  assert.equal(todayLineFor(TODAY, 'ZZTEST Client', { ...opts, now: Date.parse('2026-10-05T09:30:00Z') }), 'Today · unavailable')
+  for (const f of ['overlay/spend.mjs', 'server/harnesses/compass/spend.mjs', 'overlay/zones.mjs']) {
+    assert.ok(!/actor/i.test(fs.readFileSync(path.join(root, f), 'utf8')), `${f} names a person-shaped field`)
+  }
+})

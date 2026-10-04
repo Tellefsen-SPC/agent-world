@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tellefsen.om/agent-world/spec/ledger-cost.v1.json",
+  "title": "Compass GET /ledger/cost \u2014 today's cost per town (v1)",
+  "description": "Compass U5 (the Run Ledger). Every ended run's ledger row in the window, priced by the same code as GET /world/spend against MODEL_PRICING, grouped by town (ops_skill_runs.town, else client, else 'internal'; town_source says which). Agent World reads days=1 for the town card's 'Today' line (U37). By place, never by person: no row carries a person-shaped field.",
+  "type": "object",
+  "required": [
+    "at",
+    "days",
+    "since",
+    "town_source",
+    "totals",
+    "by_town"
+  ],
+  "properties": {
+    "at": {
+      "type": "string"
+    },
+    "days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 90
+    },
+    "since": {
+      "type": "string"
+    },
+    "pricing_version": {
+      "type": "string"
+    },
+    "town_source": {
+      "enum": [
+        "town",
+        "client"
+      ]
+    },
+    "excluded_test_runs": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "totals": {
+      "type": "object",
+      "required": [
+        "runs_total",
+        "runs_metered",
+        "runs_unmetered",
+        "runs_unpriced",
+        "tokens_in",
+        "tokens_out",
+        "tokens_unpriced",
+        "cost_usd"
+      ],
+      "properties": {
+        "runs_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "runs_metered": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "runs_unmetered": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "runs_unpriced": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokens_in": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokens_out": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokens_unpriced": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cost_usd": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "by_town": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "town",
+          "runs_total",
+          "runs_metered",
+          "runs_unmetered",
+          "runs_unpriced",
+          "tokens_in",
+          "tokens_out",
+          "tokens_unpriced",
+          "cost_usd"
+        ],
+        "properties": {
+          "town": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "runs_total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "runs_metered": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "runs_unmetered": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "runs_unpriced": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tokens_in": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tokens_out": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tokens_unpriced": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cost_usd": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "by_town_day": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "day",
+          "town",
+          "runs_total",
+          "runs_metered",
+          "runs_unmetered",
+          "runs_unpriced",
+          "tokens_in",
+          "tokens_out",
+          "tokens_unpriced",
+          "cost_usd"
+        ],
+        "properties": {
+          "day": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "town": {
+            "type": "string"
+          },
+          "runs_total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "runs_metered": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "runs_unmetered": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "runs_unpriced": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tokens_in": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tokens_out": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tokens_unpriced": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cost_usd": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  }
+}

@@ -13,6 +13,8 @@
  * sweep), LAST_GATE_RECONCILIATION }. The branch is the `version` field, never key presence: a body without
  * `version: 2` is v1 whatever else it carries.
  */
+import { withTimeout } from './health.mjs'
+
 export const EMPTY = Object.freeze({ at: '', version: 1, world_companies: null, auto_run_policy: null, deal_pipeline_stages: [], clients: [], skills: [], automations: [], connectors: [], rollups: null })
 
 const arr = (v) => (Array.isArray(v) ? v : [])
@@ -37,9 +39,14 @@ export function normalise(body) {
   }
 }
 
-export function createSubstrate(cfg, { fetchImpl = globalThis.fetch, log = () => {}, now = Date.now } = {}) {
+/** U37: how soon a failed substrate read is tried again. */
+const FAILED_RETRY_MS = 10_000
+
+export function createSubstrate(cfg, { fetchImpl: rawFetch = globalThis.fetch, log = () => {}, now = Date.now } = {}) {
+  const fetchImpl = withTimeout(rawFetch, cfg.readTimeoutMs ?? 10_000) // U37: a deadline on every read
   let cache = { at: 0, value: null }
   let warnedAt = 0
+  let last = { ok: null, error: null } // U37: the last read's outcome, for the strip's pill
 
   async function read() {
     if (cache.value && now() - cache.at < cfg.substrateCacheMs) return cache.value
@@ -53,17 +60,21 @@ export function createSubstrate(cfg, { fetchImpl = globalThis.fetch, log = () =>
       }
       const value = normalise(await res.json())
       cache = { at: now(), value }
+      last = { ok: true, error: null }
       log(`substrate v${value.version}: ${value.clients.length} clients, ${value.skills.length} skills, ${(value.world_companies?.companies || []).length} companies${value.version >= 2 ? `, ${value.automations.length} automations, ${value.connectors.length} connectors, rollups ${Object.keys(value.rollups || {}).join('/') || 'none'}` : ''}`)
     } catch (err) {
+      last = { ok: false, error: err }
       if (now() - warnedAt > 60_000) {
         warnedAt = now()
         console.warn('bot-crossing: compass — substrate unavailable —', err?.message || err)
       }
       if (!cache.value) return EMPTY
-      cache.at = now() // keep the last good answer; try again after the cache period
+      // Keep the last good answer, and try again in 10 s rather than a full cache period: the pill (U37) should
+      // clear soon after Compass is back.
+      cache.at = now() - cfg.substrateCacheMs + FAILED_RETRY_MS
     }
     return cache.value
   }
 
-  return { read, _cache: () => cache }
+  return { read, status: () => last, _cache: () => cache }
 }

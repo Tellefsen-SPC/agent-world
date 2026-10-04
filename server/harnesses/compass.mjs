@@ -28,6 +28,7 @@ import { createRooms, wantedSkills } from './compass/rooms.mjs'
 import { roomForSkill, roomName } from './compass/pack.mjs'
 import { createArchive } from './compass/archive.mjs'
 import { CAMPUS } from './compass/config.mjs'
+import { createHealth } from './compass/health.mjs'
 
 const cfg = loadConfig()
 const log = cfg.debug ? (...a) => console.error('[world]', ...a) : () => {}
@@ -45,6 +46,8 @@ let world = null // the derived zone map from the last substrate read (U12)
 let overlayApi = null
 let scanCache = { at: 0, threads: [] }
 let lastErrorAt = 0
+/** U37: whether Compass is answering — served as signals.compass, drawn as a pill on the strip. */
+const health = createHealth()
 /** U17: which skills ran in the last 30 days — a second, wider scan, refreshed every 5 min. */
 let ranCache = { at: 0, ran: null }
 const RAN_MS = 5 * 60_000
@@ -142,7 +145,7 @@ let ranRefreshing = null
 function ranSkills(now) {
   if ((!ranCache.ran || now - ranCache.at >= RAN_MS) && !ranRefreshing) {
     ranRefreshing = ledger
-      .scanSince(new Date(now - STALE_DAYS * 24 * 3600 * 1000).toISOString())
+      .scanSince(new Date(now - STALE_DAYS * 24 * 3600 * 1000).toISOString(), { timeoutMs: cfg.ledgerLongTimeoutMs })
       .then(({ events }) => {
         ranCache = { at: now, ran: ranSkillsOf(events) }
         log(`30-day scan: ${ranCache.ran.size} skills ran`)
@@ -217,19 +220,36 @@ async function scan(now = Date.now()) {
   return threads
 }
 
-/** The scan, cached so the browser's 15 s poll costs one query burst; the last good result survives a failed read. */
-async function scanThreads() {
-  const now = Date.now()
-  if (now - scanCache.at < cfg.scanCacheMs) return scanCache.threads
+/**
+ * The scan, cached so the browser's 15 s poll costs one query burst; the last good result survives a failed read.
+ * U37: one scan at a time — polls that land while a scan runs share it, so Compass is read once however many pages
+ * poll, and a slow scan can never finish after a newer one and report an outage that is already over.
+ */
+let scanning = null
+function scanThreads() {
+  if (Date.now() - scanCache.at < cfg.scanCacheMs) return Promise.resolve(scanCache.threads)
+  scanning ||= runScan(Date.now()).finally(() => (scanning = null))
+  return scanning
+}
+
+async function runScan(now) {
   try {
     scanCache = { at: now, threads: await scan(now) }
+    health.ok()
   } catch (err) {
     if (now - lastErrorAt > 60_000) {
       lastErrorAt = now
       console.warn('bot-crossing: compass —', err?.message || err)
     }
+    // The last good threads stay on screen — and the page is told they are old (U37).
+    health.fail(err)
     scanCache = { at: now, threads: scanCache.threads }
   }
+  // The substrate is the world's map: when it is failing, the towns on screen are old (or missing) too.
+  const sub = substrate.status?.()
+  if (sub?.ok === true) health.ok('substrate')
+  else if (sub?.ok === false) health.fail(sub.error, 'substrate')
+  signals = { ...signals, compass: health.snapshot() }
   return scanCache.threads
 }
 
@@ -246,4 +266,4 @@ const setArchived = async () => ({ ok: false, error: 'The world is a mirror; run
 export default { id: 'compass', name: 'Compass', detect, scanThreads, openThread, newSession, setArchived }
 
 /** Exposed for tests and the console — never for the browser. */
-export const _internals = { scan, cfg, viewer, world: () => world, currentWorld, signals: () => signals, steering, invalidate: () => (scanCache = { at: 0, threads: scanCache.threads }) }
+export const _internals = { scan, cfg, viewer, world: () => world, currentWorld, signals: () => signals, steering, health, invalidate: () => (scanCache = { at: 0, threads: scanCache.threads }) }

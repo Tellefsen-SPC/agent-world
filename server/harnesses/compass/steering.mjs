@@ -21,6 +21,7 @@
  */
 import { createNotion } from './notion.mjs'
 import { PROJECTS as PROJECTS_DATA_SOURCE, DECISIONS as DECISIONS_DATA_SOURCE } from './notion-sources.mjs'
+import { withTimeout } from './health.mjs'
 export const PIPELINE_TABLE = 'tbl5OkxwL3WqTK6Vz'
 export { PROJECTS_DATA_SOURCE, DECISIONS_DATA_SOURCE }
 export const CACHE_MS = 5 * 60_000
@@ -75,7 +76,8 @@ export function nextMilestone(list) {
   return open[0] || null
 }
 
-export function createSteering(cfg, { surfaces, substrate, fetchImpl = globalThis.fetch, log = () => {}, now = Date.now } = {}) {
+export function createSteering(cfg, { surfaces, substrate, fetchImpl: rawFetch = globalThis.fetch, log = () => {}, now = Date.now } = {}) {
+  const fetchImpl = withTimeout(rawFetch, cfg.readTimeoutMs ?? 10_000) // U37: a deadline on every read
   const caches = new Map() // key → { at, value }
   /** A good answer lives CACHE_MS; an answer that names an error is retried after ERROR_MS, so a blip does not blank a panel for five minutes. */
   const cached = async (key, fn) => {
@@ -110,7 +112,7 @@ export function createSteering(cfg, { surfaces, substrate, fetchImpl = globalThi
           do {
             const url = `https://api.airtable.com/v0/${cfg.airtableBaseId}/${PIPELINE_TABLE}?pageSize=100${query}${offset ? `&offset=${encodeURIComponent(offset)}` : ''}`
             const res = await fetchImpl(url, { headers: { Authorization: `Bearer ${cfg.airtableToken}` } })
-            const json = await res.json().catch(() => ({}))
+            const json = (res.ok ? await res.json() : await res.json().catch(() => ({})))
             if (!res.ok) throw Object.assign(new Error(fixAirtable(res.status)), { status: res.status, named: true })
             for (const r of json.records || []) records.push({ ...r, baseId: cfg.airtableBaseId })
             offset = json.offset || ''
@@ -214,7 +216,7 @@ export function createSteering(cfg, { surfaces, substrate, fetchImpl = globalThi
         do {
           const url = `https://api.airtable.com/v0/${cfg.airtableBaseId}/${PIPELINE_TABLE}?pageSize=100${offset ? `&offset=${encodeURIComponent(offset)}` : ''}`
           const res = await fetchImpl(url, { headers: { Authorization: `Bearer ${cfg.airtableToken}` } })
-          const json = await res.json().catch(() => ({}))
+          const json = (res.ok ? await res.json() : await res.json().catch(() => ({})))
           if (!res.ok) throw new Error(fixAirtable(res.status))
           for (const r of json.records || []) records.push({ ...r, baseId: cfg.airtableBaseId })
           offset = json.offset || ''
