@@ -19,7 +19,8 @@
         "npm test is green: invariants (src unchanged, no model endpoints, adapter has no write calls, registry is [compass]); adapter tests are skipped until U3",
         "CLAUDE.md, SPEC.md, FEATURES.md, feature_list.json, VERIFICATION.md, init.sh, claude-progress.txt, .env.example, .mcp.json are in the repo root; .env, .claude/run_id and .claude/.gate-open are gitignored"
       ],
-      "passes": false,
+      "passes": true,
+      "verified": "2026-09-06 · Christoffer, Notion Build Pack unit table — as recorded in knowledge-base/04-projects/agent-world/build-pack-notes.md (snapshot 2026-09-15); M1 regression 9/9 2026-09-07 (same file; claude-progress.txt \"M1 CLOSED 2026-09-07\")",
       "built_in_sandbox": "2026-09-06 — adapter skeleton, registry, tests and init.sh written and proven in the kickoff sandbox on a real clone (npm test 8/8, init.sh 'smoke ok' with a fake env). Remaining for the Mac: the fork itself, the upstream remote, .env, run ./init.sh, V-U1."
     },
     {
@@ -52,7 +53,8 @@
         "The response never contains the string SUPABASE_SERVICE_ROLE_KEY or anything shaped like a Supabase key",
         "A malformed since (not parseable as a date) → 400, not a 500 or a hang"
       ],
-      "passes": false
+      "passes": true,
+      "verified": "2026-09-06 · Christoffer, Notion Build Pack unit table — as recorded in knowledge-base/04-projects/agent-world/build-pack-notes.md (snapshot 2026-09-15); M1 regression 9/9 2026-09-07 (same file; claude-progress.txt \"M1 CLOSED 2026-09-07\")"
     },
     {
       "id": "U3",
@@ -69,7 +71,8 @@
         "In the browser: ZZTEST Client plot with Alpha holding ?, Beta hammering, Delta asleep; Gamma slumped with ! on Tellefsen HQ; HUD 'need you' = 1; two consecutive polls within 5 s issue one Supabase query burst (log)",
         "Post run_completed for Beta: within one poll Beta stops hammering and shows idle, no badge"
       ],
-      "passes": false,
+      "passes": true,
+      "verified": "2026-09-06 14:11 · Christoffer, Notion Build Pack unit table — as recorded in knowledge-base/04-projects/agent-world/build-pack-notes.md (snapshot 2026-09-15); M1 regression 9/9 2026-09-07 (same file; claude-progress.txt \"M1 CLOSED 2026-09-07\")",
       "built_in_sandbox": "2026-09-06 — fold/threads/viewer/supabase written; fixture test green; real-data dry run over 23 live events / 9 runs green (correct zones, gate matching incl. a surface-less gate, no undefined fields). Remaining for the Mac: seed ZZTEST, open the world, V-U3."
     },
     {
@@ -87,7 +90,8 @@
         "Press A on any compass thread: nothing happens beyond the toast; data/colony.json 'archived' stays empty; no request other than GET reached Supabase, Notion or Airtable (adapter debug log)",
         "Reload the page: every plot is where it was (data/colony.json plots persisted)"
       ],
-      "passes": false,
+      "passes": true,
+      "verified": "2026-09-06 14:11 · Christoffer, Notion Build Pack unit table — as recorded in knowledge-base/04-projects/agent-world/build-pack-notes.md (snapshot 2026-09-15); M1 regression 9/9 2026-09-07 (same file; claude-progress.txt \"M1 CLOSED 2026-09-07\")",
       "built_in_sandbox": "2026-09-06 — openThread/newSession/setArchived and the link-only Open resolution written; canArchive false. Remaining for the Mac: V-U5."
     },
     {
@@ -105,7 +109,8 @@
         "Select a ? figure and press A: nothing is hidden; a toast says the run is waiting on you; the figure stays",
         "Deselect (click empty ground): the panel disappears"
       ],
-      "passes": false
+      "passes": true,
+      "verified": "2026-09-06 14:23 · Christoffer, Notion Build Pack unit table — as recorded in knowledge-base/04-projects/agent-world/build-pack-notes.md (snapshot 2026-09-15); M1 regression 9/9 2026-09-07 (same file; claude-progress.txt \"M1 CLOSED 2026-09-07\")"
     },
     {
       "id": "U4",
@@ -119,7 +124,8 @@
         "test/surfaces.test.mjs green: 1 of 4 → 0.25 from an undashed id; the dashed id hits the cache; null → floor; unshared → floor without throwing; all GETs",
         "On the Mac with the Projects DB shared: an agent-world-build run's bar reads 25 %; Gamma's reads 5 %"
       ],
-      "passes": false
+      "passes": true,
+      "verified": "2026-09-06 · Christoffer, Notion Build Pack unit table — as recorded in knowledge-base/04-projects/agent-world/build-pack-notes.md (snapshot 2026-09-15); M1 regression 9/9 2026-09-07 (same file; claude-progress.txt \"M1 CLOSED 2026-09-07\")"
     },
     {
       "id": "U6",
@@ -133,7 +139,8 @@
         "test/surfaces.test.mjs green: each surface resolves on its own moved-on state; the negative answers come from a real read; no request for class_b_gate/client_gate; a thrown read returns false; resolved is cached",
         "Real-surface proof: a signed Content row → true; ZZTEST Alpha (Pending Approval) → false; an Active Decision → true"
       ],
-      "passes": false
+      "passes": true,
+      "verified": "2026-09-06 14:52 · Christoffer, Notion Build Pack unit table — as recorded in knowledge-base/04-projects/agent-world/build-pack-notes.md (snapshot 2026-09-15); M1 regression 9/9 2026-09-07 (same file; claude-progress.txt \"M1 CLOSED 2026-09-07\")"
     },
     {
       "id": "U7",
@@ -165,7 +172,8 @@
         "A pending_approval update whose Status stays Pending Approval writes nothing; an update on any other table_key writes nothing",
         "Worker deploy + a smoke run recorded in the PR; the Worker's own tests green"
       ],
-      "passes": false
+      "passes": true,
+      "verified": "2026-09-06 21:30 · Christoffer, Notion Build Pack unit table — as recorded in knowledge-base/04-projects/agent-world/build-pack-notes.md (snapshot 2026-09-15); M1 regression 9/9 2026-09-07 (same file; claude-progress.txt \"M1 CLOSED 2026-09-07\")"
     },
     {
       "id": "U8",
@@ -713,6 +721,48 @@
         "npm test green; vite build bundles the overlay; git diff upstream/main -- src/ empty"
       ],
       "check": "V-U35",
+      "passes": true,
+      "verified": null
+    },
+    {
+      "id": "U36",
+      "category": "spend",
+      "milestone": "M2b — The still map (Decision 2026-09-07; SPEC.md §3 O6) · ES-4.13 Spend — U36 cut 2026-09-08 (chat spend estimated in Compass SPEND_ESTIMATES), built 2026-09-08 · added to this list 2026-10-04 by the developer under delegated decision authority (the spec merge, Prompt E2, was owed), to ratify",
+      "description": "The empty town and the estimate line — every town of the planet on screen carries a line under the Owner preset: a town with no by_client row, or runs_total 0, reads `no runs · 30d` (never blank, never $0), or `no metered runs · 30d` when it has an estimate; a by_client row's est (the client's chat-usage estimate from SPEND_ESTIMATES, attributed by client name — U36W, external) is its own dimmer line under the metered one — `est. chat {in+out} · ~{cost} · {start}–{end} · {n} conversations`, plus `· attributed by name` for confidence medium — and is never summed into a metered counter; the corner office carries the campus's totals.est and the planet switcher the planet's; shown only under a pack whose spend.estimates is true (tellefsen-campus; neutral shows nothing); never per person (Annex III)",
+      "delivers": [
+        "ES-4.13"
+      ],
+      "depends_on": [
+        "U35"
+      ],
+      "external": [
+        "U36W — estimates on GET /world/spend in tellefsen-compass-mcp (live 2026-09-08: estimates_version, by_client[].est, totals.est)"
+      ],
+      "prereq": [
+        "U35 Built",
+        "U36W live: GET $W/world/spend?window=30 answers 200 with estimates_version and est on by_client rows (Step 1 probe)"
+      ],
+      "repo": "agent-world",
+      "files": [
+        "compass/spend.mjs (estimates_version whitelisted; est rides through untouched)",
+        "spec/world-spend.v1.json (estimates_version, by_client[].est, totals.est)",
+        "spec/pack.v1.json (spend.estimates)",
+        "overlay/spend.mjs (townLines, estLine, showEstimates, withEst, the billions tier)",
+        "overlay/main.js (town card lines, corner office, planet switcher #aw-planet-est, refoldSpend)",
+        "overlay/packs/*/pack.json (spend.estimates)",
+        "test/fixtures/m2b-spend.live.json (re-captured with scripts/capture-contract.sh --spend-only)"
+      ],
+      "steps": [
+        "automated: the empty town — a town with no by_client row, or one with runs_total 0 and no est, reads one quiet line `no runs · 30d`: never blank, never $0",
+        "automated: the estimate line — `est. chat {in+out} · ~{cost} · {start}–{end} · {n} conversations`, compact numbers, the tilde and the word est. mandatory; confidence medium adds `· attributed by name`; a segment the est lacks is left out (totals.est has no period and no conversations); OMR multiplies by display.omr_per_usd",
+        "automated: no summing — the metered line is byte-identical with and without est; the fold's counters, the campus, the planet and both identities are unchanged by an est; the campus and the planet carry totals.est on their own line",
+        "automated: the pack flag — spend.estimates true on tellefsen-campus shows the estimate line; a pack without it, neutral, or any preset but Owner hides it, and the town reads `no runs`, not `no metered runs`",
+        "automated: the live capture — estimates_version rides through the reader; the clients carrying est read `no metered runs · 30d` and their estimate; no actor and no person-shaped key on any est",
+        "automated: spec/world-spend.v1.json validates the re-captured GET /world/spend and refuses an est short of cost_usd_est, a confidence outside low | medium | high and a negative cost; est and estimates_version are optional",
+        "live: on the dev server under the Owner preset, a town whose runs are unmetered reads `no metered runs · 30d` over its `est. chat …` line; the planet switcher and the corner office read the totals.est line; the ZZTEST towns read `no runs · 30d` (the default read excludes test rows)",
+        "npm test green; vite build bundles the overlay; git diff upstream/main -- src/ empty"
+      ],
+      "check": "V-U35, extended for U36 (Sitting S, runner Prompt V) — VERIFICATION.md carries no separate V-U36 yet",
       "passes": true,
       "verified": null
     },
