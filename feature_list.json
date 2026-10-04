@@ -20,7 +20,6 @@
         "CLAUDE.md, SPEC.md, FEATURES.md, feature_list.json, VERIFICATION.md, init.sh, claude-progress.txt, .env.example, .mcp.json are in the repo root; .env, .claude/run_id and .claude/.gate-open are gitignored"
       ],
       "passes": true,
-      "verified": "2026-09-06 · Christoffer, Notion Build Pack unit table — as recorded in knowledge-base/04-projects/agent-world/build-pack-notes.md (snapshot 2026-09-15); M1 regression 9/9 2026-09-07 (same file; claude-progress.txt \"M1 CLOSED 2026-09-07\")",
       "built_in_sandbox": "2026-09-06 — adapter skeleton, registry, tests and init.sh written and proven in the kickoff sandbox on a real clone (npm test 8/8, init.sh 'smoke ok' with a fake env). Remaining for the Mac: the fork itself, the upstream remote, .env, run ./init.sh, V-U1."
     },
     {
@@ -53,8 +52,7 @@
         "The response never contains the string SUPABASE_SERVICE_ROLE_KEY or anything shaped like a Supabase key",
         "A malformed since (not parseable as a date) → 400, not a 500 or a hang"
       ],
-      "passes": true,
-      "verified": "2026-09-06 · Christoffer, Notion Build Pack unit table — as recorded in knowledge-base/04-projects/agent-world/build-pack-notes.md (snapshot 2026-09-15); M1 regression 9/9 2026-09-07 (same file; claude-progress.txt \"M1 CLOSED 2026-09-07\")"
+      "passes": true
     },
     {
       "id": "U3",
@@ -72,7 +70,6 @@
         "Post run_completed for Beta: within one poll Beta stops hammering and shows idle, no badge"
       ],
       "passes": true,
-      "verified": "2026-09-06 14:11 · Christoffer, Notion Build Pack unit table — as recorded in knowledge-base/04-projects/agent-world/build-pack-notes.md (snapshot 2026-09-15); M1 regression 9/9 2026-09-07 (same file; claude-progress.txt \"M1 CLOSED 2026-09-07\")",
       "built_in_sandbox": "2026-09-06 — fold/threads/viewer/supabase written; fixture test green; real-data dry run over 23 live events / 9 runs green (correct zones, gate matching incl. a surface-less gate, no undefined fields). Remaining for the Mac: seed ZZTEST, open the world, V-U3."
     },
     {
@@ -91,7 +88,6 @@
         "Reload the page: every plot is where it was (data/colony.json plots persisted)"
       ],
       "passes": true,
-      "verified": "2026-09-06 14:11 · Christoffer, Notion Build Pack unit table — as recorded in knowledge-base/04-projects/agent-world/build-pack-notes.md (snapshot 2026-09-15); M1 regression 9/9 2026-09-07 (same file; claude-progress.txt \"M1 CLOSED 2026-09-07\")",
       "built_in_sandbox": "2026-09-06 — openThread/newSession/setArchived and the link-only Open resolution written; canArchive false. Remaining for the Mac: V-U5."
     },
     {
@@ -109,8 +105,7 @@
         "Select a ? figure and press A: nothing is hidden; a toast says the run is waiting on you; the figure stays",
         "Deselect (click empty ground): the panel disappears"
       ],
-      "passes": true,
-      "verified": "2026-09-06 14:23 · Christoffer, Notion Build Pack unit table — as recorded in knowledge-base/04-projects/agent-world/build-pack-notes.md (snapshot 2026-09-15); M1 regression 9/9 2026-09-07 (same file; claude-progress.txt \"M1 CLOSED 2026-09-07\")"
+      "passes": true
     },
     {
       "id": "U4",
@@ -124,8 +119,7 @@
         "test/surfaces.test.mjs green: 1 of 4 → 0.25 from an undashed id; the dashed id hits the cache; null → floor; unshared → floor without throwing; all GETs",
         "On the Mac with the Projects DB shared: an agent-world-build run's bar reads 25 %; Gamma's reads 5 %"
       ],
-      "passes": true,
-      "verified": "2026-09-06 · Christoffer, Notion Build Pack unit table — as recorded in knowledge-base/04-projects/agent-world/build-pack-notes.md (snapshot 2026-09-15); M1 regression 9/9 2026-09-07 (same file; claude-progress.txt \"M1 CLOSED 2026-09-07\")"
+      "passes": true
     },
     {
       "id": "U6",
@@ -139,8 +133,7 @@
         "test/surfaces.test.mjs green: each surface resolves on its own moved-on state; the negative answers come from a real read; no request for class_b_gate/client_gate; a thrown read returns false; resolved is cached",
         "Real-surface proof: a signed Content row → true; ZZTEST Alpha (Pending Approval) → false; an Active Decision → true"
       ],
-      "passes": true,
-      "verified": "2026-09-06 14:52 · Christoffer, Notion Build Pack unit table — as recorded in knowledge-base/04-projects/agent-world/build-pack-notes.md (snapshot 2026-09-15); M1 regression 9/9 2026-09-07 (same file; claude-progress.txt \"M1 CLOSED 2026-09-07\")"
+      "passes": true
     },
     {
       "id": "U7",
@@ -172,8 +165,7 @@
         "A pending_approval update whose Status stays Pending Approval writes nothing; an update on any other table_key writes nothing",
         "Worker deploy + a smoke run recorded in the PR; the Worker's own tests green"
       ],
-      "passes": true,
-      "verified": "2026-09-06 21:30 · Christoffer, Notion Build Pack unit table — as recorded in knowledge-base/04-projects/agent-world/build-pack-notes.md (snapshot 2026-09-15); M1 regression 9/9 2026-09-07 (same file; claude-progress.txt \"M1 CLOSED 2026-09-07\")"
+      "passes": true
     },
     {
       "id": "U8",
