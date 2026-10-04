@@ -7,7 +7,7 @@
  * rows and totals ride through untouched — an estimate is read and shown on its own line, never summed here.
  *
  * Read only, cached 60 s per (window, include_test), and the last good answer survives a failed read (warned once
- * a minute) — the same discipline as the substrate read. With nothing ever read, `read()` returns EMPTY with the
+ * a minute) — the same discipline as the substrate read, one read in flight per key. With nothing ever read, `read()` returns EMPTY with the
  * error named, so a panel can say why its line is missing instead of printing zeros.
  *
  * U37 — today's cost per town: `today()` reads GET /ledger/cost?days=1 (Compass U5), the UTC day so far, priced by the
@@ -74,11 +74,18 @@ export function createSpend(cfg, { fetchImpl: rawFetch = globalThis.fetch, log =
   const fetchImpl = withTimeout(rawFetch, cfg.readTimeoutMs ?? 10_000) // U37: a deadline on every read
   const cache = new Map() // `${window}:${includeTest}` → { at, value }; U37: `today:${includeTest}` for the day's cost
   const warnedAt = new Map()
+  const inflight = new Map() // key → the read in flight; concurrent callers on a cold or expired key share it (docs/adr/0004)
 
   /** One Worker read behind the cache: fresh for spendCacheMs, the last good answer kept on a failure, EMPTY + error with none. */
-  async function cached(url, key, { what, empty, normaliseBody, valid = () => true, describe }) {
+  function cached(url, key, opts) {
     const have = cache.get(key)
-    if (have?.value && now() - have.at < cfg.spendCacheMs) return have.value
+    if (have?.value && now() - have.at < cfg.spendCacheMs) return Promise.resolve(have.value)
+    if (!inflight.has(key)) inflight.set(key, readOnce(url, key, opts).finally(() => inflight.delete(key)))
+    return inflight.get(key)
+  }
+
+  async function readOnce(url, key, { what, empty, normaliseBody, valid = () => true, describe }) {
+    const have = cache.get(key)
     try {
       const res = await fetchImpl(url, {
         headers: { Authorization: `Bearer ${cfg.eventsBearerToken}`, Accept: 'application/json' },
