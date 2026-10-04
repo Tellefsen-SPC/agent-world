@@ -57,3 +57,23 @@ export function benchResidents(threads, maxAgents) {
   const shown = residents.slice(0, budget)
   return { threads: [...runs, ...shown], shown: shown.length, total: residents.length }
 }
+
+/**
+ * U37 — the notice for a Compass that is not answering, or null when it is. Pure; the strip draws it as a pill.
+ * `compass` is signals.compass from GET /world: { ok, downSince, lastGoodAt, error }. Until the first scan has
+ * finished, ok is null and nothing is shown — a world that is still loading is not a world that is down.
+ */
+export function compassNotice(compass, { timeOf = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) } = {}) {
+  if (!compass || compass.ok !== false) return null
+  const since = compass.downSince ? timeOf(compass.downSince) : null
+  const seen = compass.lastGoodAt ? timeOf(compass.lastGoodAt) : null
+  return {
+    label: 'Compass unavailable',
+    detail: since ? `since ${since}` : '',
+    title: [
+      `No answer from Compass${since ? ` since ${since}` : ''}${compass.error ? ` (${compass.error})` : ''}.`,
+      seen ? `What you see is what the world last saw, at ${seen}.` : 'Nothing has loaded yet, so the world is empty.',
+      'It keeps trying on its own; nothing here is lost.',
+    ].join(' '),
+  }
+}

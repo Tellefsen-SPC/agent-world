@@ -238,5 +238,20 @@ Absorbed 2026-09-07 by U29 (ES-6.4): prospects are not plots; the warmth (1.0 / 
 - **Fail looks like:** `$0.00` on an unmetered room; a line under the viewer preset; a per-actor number anywhere; a town whose figure sum disagrees with `GET /world/spend?window=30&include_test=1` for that client; a fourth Worker route passing npm test.
 - **Cleanup:** `scripts/zztest-seed.sh --clean` before the next film (Iota's rows go with the other ZZTEST rows).
 
+## V-U37 — When Compass is down, and today's cost (Engineering spine U8)
+- **Setup:** none for the first half. For the second half, Compass U5 deployed (`GET $W/ledger/cost?days=1` answers 200) and at least one ZZTEST run ended today (`scripts/zztest-seed.sh`, then one run's `run_completed`).
+- **Do (Compass down):** stop the world. In `.env`, set `EVENTS_URL=http://127.0.0.1:9/events` (nothing listens there) and start it with `./dev.sh`. Open http://127.0.0.1:5274. Wait one poll. Hover the red pill. Then put the real `EVENTS_URL` back and restart.
+- **See (Compass down):** the world loads, with no crash and no error page. The strip's first pill reads **Compass unavailable · since HH:MM**, and its tooltip says nothing has loaded yet. `curl -s 127.0.0.1:5275/world` carries `"compass":{"ok":false,…}` under `signals`. With the real URL back, the pill is gone after one poll.
+- **Do (today's cost):** click the ZZTEST Client town plot, under the Owner preset, with `?include_test=1` on the page.
+- **See (today's cost):** under the 30-day line, a line reading `Today · $… · N runs`, matching `curl -s -H "Authorization: Bearer $EVENTS_BEARER_TOKEN" "$W/ledger/cost?days=1&include_test=1"` for that town. A town with nothing today reads `Today · no runs`. Under `WORLD_VIEWER_PRESET=viewer` there is no line.
+- **Fail looks like:**
+  - a blank or crashed page with Compass down;
+  - stale runs on screen with no pill;
+  - a pill that stays after Compass is back;
+  - `$0.00` for a town whose runs are unmetered;
+  - a Today line under a non-Owner preset;
+  - the bearer token anywhere in the server log.
+- **Cleanup:** the real `EVENTS_URL` back in `.env`; `scripts/zztest-seed.sh --clean`.
+
 ## Cadence and evidence
 Per unit: the check above, minutes each. Per milestone: when U8 verifies, re-run V-U1 … V-U7 and V-U9 in one sitting (the regression pass) before `milestone-close` flips M1 to Done. **Regression before milestone-close M2:** re-run V-U1–V-U6, V-U9–V-U11, V-U12W and V-U12–V-U20 in one sitting. **M2b batch sitting (2026-09-07):** first the re-based V-U12, V-U13, V-U14, V-U15, V-U18, then V-U28 … V-U34, then V-U35 (Sitting S, Part V). Evidence per unit in the Notion unit table: the date, plus a link — the Compass `run_id` for V-U2, a screenshot for V-U3/V-U6, the recording for V-U8.

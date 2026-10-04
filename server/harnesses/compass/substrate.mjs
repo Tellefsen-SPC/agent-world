@@ -13,6 +13,8 @@
  * sweep), LAST_GATE_RECONCILIATION }. The branch is the `version` field, never key presence: a body without
  * `version: 2` is v1 whatever else it carries.
  */
+import { withTimeout } from './health.mjs'
+
 export const EMPTY = Object.freeze({ at: '', version: 1, world_companies: null, auto_run_policy: null, deal_pipeline_stages: [], clients: [], skills: [], automations: [], connectors: [], rollups: null })
 
 const arr = (v) => (Array.isArray(v) ? v : [])
@@ -37,7 +39,8 @@ export function normalise(body) {
   }
 }
 
-export function createSubstrate(cfg, { fetchImpl = globalThis.fetch, log = () => {}, now = Date.now } = {}) {
+export function createSubstrate(cfg, { fetchImpl: rawFetch = globalThis.fetch, log = () => {}, now = Date.now } = {}) {
+  const fetchImpl = withTimeout(rawFetch, cfg.compassTimeoutMs ?? 10_000) // U37: a deadline on every read
   let cache = { at: 0, value: null }
   let warnedAt = 0
 

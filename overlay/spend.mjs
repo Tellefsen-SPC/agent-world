@@ -215,6 +215,30 @@ export function townLines(b, { viewer, pack, fold } = {}) {
   return est ? [spendLine(b, lineOpts(pack, fold)), est] : [spendLine(b, lineOpts(pack, fold))]
 }
 
+/**
+ * U37 — today's line on a town card, from the Worker's GET /ledger/cost?days=1 (Compass U5) through the sidecar's
+ * /spend/today: the UTC day so far, priced by the same code as the 30-day line, the town's own by_town row.
+ *   `Today · $1.23 · 4 runs`   `Today · unmetered · 2 runs`   `Today · no runs`   `Today · unavailable` (the read failed)
+ * Under the same gate as every spend line — the Owner preset, a pack that shows spend — and never per person.
+ */
+export function todayRowFor(today, town) {
+  const name = str(town)
+  return (Array.isArray(today?.by_town) ? today.by_town : []).find((r) => str(r?.town) === name) || null
+}
+export function todayLine(row, { currency = 'USD', omrPerUsd = null } = {}) {
+  const runs = num(row?.runs_total)
+  if (!row || runs === 0) return 'Today · no runs'
+  const cost = num(row.runs_metered) > 0 ? money(row.cost_usd, { currency, omrPerUsd }) : 'unmetered'
+  let line = `Today · ${cost} · ${runs} run${runs === 1 ? '' : 's'}`
+  if (num(row.runs_metered) > 0 && num(row.runs_unmetered) > 0) line += ` · ${num(row.runs_unmetered)} unmetered`
+  return line
+}
+export function todayLineFor(today, town, { viewer, pack, fold } = {}) {
+  if (!showSpend(viewer, pack) || !today) return ''
+  if (today.error) return 'Today · unavailable'
+  return todayLine(todayRowFor(today, town), lineOpts(pack, fold))
+}
+
 /** A plain object for the console handle and the checks (no Maps). */
 export function summary(fold) {
   if (!fold) return null

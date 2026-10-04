@@ -36,17 +36,17 @@
 // wears (skin, nouns, rooms), quiet towns (an Active client with no runs still gets its deck and
 // name plate), and the empty planet ("no substrate yet"). Every name on screen arrives from the
 // substrate through the adapter; none lives here or in a pack (npm test greps for them).
-import { ready, getWorld, currentKey, currentPlanet, townsHere, isHome, switchTo, signals, onWorldLate, loadRoom, loadArchive, loadSpend, rooms as roomsOf } from './zones.mjs'
+import { ready, getWorld, currentKey, currentPlanet, townsHere, isHome, switchTo, signals, onWorldLate, loadRoom, loadArchive, loadSpend, loadSpendToday, rooms as roomsOf } from './zones.mjs'
 import { nextTownSlot } from '../server/harnesses/compass/layout.mjs'
 import { altitudeOf, labelRule, plateText, placeCounts } from './lod.mjs'
 import { homeTarget, homeDistance } from './home.mjs'
 import { roomSections, skillRowsOf } from './rooms.mjs'
-import { suitFor, SignalDiff, AW_MUTED } from './signals.mjs'
+import { suitFor, SignalDiff, AW_MUTED, compassNotice } from './signals.mjs'
 import { wear, pack, packOf, noun, roomFor } from './pack.mjs'
 import { createLabel, Plot, PLOT_PALETTE, hashString, worldToHex } from '../src/world/plots.js'
 import { artifactRows, BubbleTracker, newestArtifactAt, bubbleEligible } from './artifacts.mjs'
 import { shelfSections, projectTab } from './archive.mjs'
-import { foldSpend, spendLineFor, estLineFor, townLines, showSpend, summary as spendSummary } from './spend.mjs'
+import { foldSpend, spendLineFor, estLineFor, townLines, todayLineFor, showSpend, summary as spendSummary } from './spend.mjs'
 import { intrayRows, nextRow, withHands } from './intray.mjs'
 import { ApproveTracker, approveIntent } from './approve.mjs'
 
@@ -111,7 +111,7 @@ html[data-aw-altitude="orbit"] #aw-panel{display:none!important}
 #aw-strip .pill i{width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
 #aw-strip .pill b{font-weight:650}
 #aw-strip .pill span{color:#9a9aa6}
-#aw-strip .pill.wait{color:var(--aw-wait)}#aw-strip .pill.block{color:var(--aw-block)}#aw-strip .pill.work{color:var(--aw-work)}#aw-strip .pill.done{color:var(--aw-done)}
+#aw-strip .pill.wait{color:var(--aw-wait)}#aw-strip .pill.block{color:var(--aw-block)}#aw-strip .pill.work{color:var(--aw-work)}#aw-strip .pill.done{color:var(--aw-done)}#aw-strip .pill.down{color:var(--aw-block);border-color:var(--aw-block)}
 #aw-panel .fx{margin:6px 0 8px;padding:8px 12px;border-left:3px solid var(--aw-quiet);background:rgba(255,255,255,.04);border-radius:6px}
 #aw-panel .fx b{display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.7;margin-bottom:4px}
 #aw-panel .fx .ms{display:flex;justify-content:space-between;gap:10px;padding:2px 0;opacity:.85}
@@ -527,6 +527,7 @@ function openRoom(id) {
 // for any other preset — or under a pack whose spend.show is false — spendLineHtml yields nothing, not a blank line.
 // ?include_test=1 on the page keeps the test rows in (the fixture check, V-U35); nothing here counts or stores.
 let spendData = null
+let spendToday = null // U37: today's cost per town (/spend/today), read beside the 30-day object
 let spendFold = null
 let spendAt = 0
 let spendLoading = null
@@ -538,7 +539,8 @@ async function refreshSpend(force = false) {
   if (!force && spendData && Date.now() - spendAt < 60_000) return spendFold
   if (spendLoading) return spendLoading
   spendLoading = (async () => {
-    const d = await loadSpend(spendWindow(), INCLUDE_TEST)
+    const [d, t] = await Promise.all([loadSpend(spendWindow(), INCLUDE_TEST), loadSpendToday(INCLUDE_TEST)])
+    spendToday = t
     if (d) {
       spendData = d
       spendAt = Date.now()
@@ -573,12 +575,20 @@ function estLineHtml(bucket, place = '') {
   const line = estLineFor(bucket, { viewer: getWorld()?.viewer, pack: pack(), fold: spendFold })
   return lineHtml(line, 'est', `${place ? place + ' · ' : ''}${EST_TITLE()}`)
 }
-/** U36: the town card's lines — the metered one (or the quiet `no runs`), then the estimate when there is one. */
+/** U36: the town card's lines — the metered one (or the quiet `no runs`), then the estimate when there is one. U37: then today's. */
 function townLinesHtml(name) {
   if (!spendAllowed() || !spendFold) return ''
-  if (spendFold.error) return spendLineHtml(null)
+  if (spendFold.error) return spendLineHtml(null) + todayLineHtml(name)
   const lines = townLines(spendFold.towns.get(name), { viewer: getWorld()?.viewer, pack: pack(), fold: spendFold })
-  return lines.map((line) => (line.startsWith('est. ') ? lineHtml(line, 'est', EST_TITLE()) : line.startsWith('no ') ? lineHtml(line, 'quiet', SPEND_TITLE()) : lineHtml(line, '', SPEND_TITLE()))).join('')
+  return lines.map((line) => (line.startsWith('est. ') ? lineHtml(line, 'est', EST_TITLE()) : line.startsWith('no ') ? lineHtml(line, 'quiet', SPEND_TITLE()) : lineHtml(line, '', SPEND_TITLE()))).join('') + todayLineHtml(name)
+}
+/** U37: today's line for a town — the UTC day so far, from Compass's GET /ledger/cost?days=1; quiet when there is nothing. */
+const TODAY_TITLE = () => `today so far (since 00:00 UTC) · priced as the line above · by place, never by person · ${spendToday?.at || ''}`
+function todayLineHtml(name) {
+  const line = todayLineFor(spendToday, name, { viewer: getWorld()?.viewer, pack: pack(), fold: spendFold })
+  if (!line) return ''
+  const quiet = /no runs|unavailable/.test(line)
+  return lineHtml(line, quiet ? 'quiet' : '', quiet && spendToday?.error ? `today's cost — ${spendToday.error}` : TODAY_TITLE())
 }
 /** The line for a place, or '' — spendLineFor is the Owner-only / pack gate; a failed read says so instead of zeros. */
 function spendLineHtml(bucket) {
@@ -832,7 +842,11 @@ function syncStrip() {
     ['work', c.running, 'running', 'live runs — counted on their project fixtures, never a figure'],
     ['done', c.shippedToday, 'shipped today', 'runs completed since midnight'],
   ]
-  const html = pills.map(([cls, n, label, title]) => `<div class="pill ${cls}" data-key="${cls}" data-empty="${!n}" title="${esc(title)}"><i></i><b>${n}</b><span>${label}</span></div>`).join('')
+  // U37 — when Compass is not answering, say so first: the counts beside it are the last ones the world saw.
+  const down = compassNotice(sig.compass)
+  const html =
+    (down ? `<div class="pill down" data-key="down" title="${esc(down.title)}"><i></i><b>${esc(down.label)}</b><span>${esc(down.detail)}</span></div>` : '') +
+    pills.map(([cls, n, label, title]) => `<div class="pill ${cls}" data-key="${cls}" data-empty="${!n}" title="${esc(title)}"><i></i><b>${n}</b><span>${label}</span></div>`).join('')
   if (strip.innerHTML !== html) {
     strip.innerHTML = html
     strip.querySelector('.pill.wait')?.addEventListener('click', () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n' })))

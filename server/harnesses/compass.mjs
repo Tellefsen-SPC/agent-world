@@ -28,6 +28,7 @@ import { createRooms, wantedSkills } from './compass/rooms.mjs'
 import { roomForSkill, roomName } from './compass/pack.mjs'
 import { createArchive } from './compass/archive.mjs'
 import { CAMPUS } from './compass/config.mjs'
+import { createHealth } from './compass/health.mjs'
 
 const cfg = loadConfig()
 const log = cfg.debug ? (...a) => console.error('[world]', ...a) : () => {}
@@ -45,6 +46,8 @@ let world = null // the derived zone map from the last substrate read (U12)
 let overlayApi = null
 let scanCache = { at: 0, threads: [] }
 let lastErrorAt = 0
+/** U37: whether Compass is answering — served as signals.compass, drawn as a pill on the strip. */
+const health = createHealth()
 /** U17: which skills ran in the last 30 days — a second, wider scan, refreshed every 5 min. */
 let ranCache = { at: 0, ran: null }
 const RAN_MS = 5 * 60_000
@@ -223,13 +226,17 @@ async function scanThreads() {
   if (now - scanCache.at < cfg.scanCacheMs) return scanCache.threads
   try {
     scanCache = { at: now, threads: await scan(now) }
+    health.ok()
   } catch (err) {
     if (now - lastErrorAt > 60_000) {
       lastErrorAt = now
       console.warn('bot-crossing: compass —', err?.message || err)
     }
+    // The last good threads stay on screen — and the page is told they are old (U37).
+    health.fail(err)
     scanCache = { at: now, threads: scanCache.threads }
   }
+  signals = { ...signals, compass: health.snapshot() }
   return scanCache.threads
 }
 
@@ -246,4 +253,4 @@ const setArchived = async () => ({ ok: false, error: 'The world is a mirror; run
 export default { id: 'compass', name: 'Compass', detect, scanThreads, openThread, newSession, setArchived }
 
 /** Exposed for tests and the console — never for the browser. */
-export const _internals = { scan, cfg, viewer, world: () => world, currentWorld, signals: () => signals, steering, invalidate: () => (scanCache = { at: 0, threads: scanCache.threads }) }
+export const _internals = { scan, cfg, viewer, world: () => world, currentWorld, signals: () => signals, steering, health, invalidate: () => (scanCache = { at: 0, threads: scanCache.threads }) }

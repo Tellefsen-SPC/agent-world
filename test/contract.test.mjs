@@ -1,5 +1,5 @@
 // Agent World — U34: contract v1. The schemas validate the captured Worker responses and the packs;
-// the adapter reads exactly three Worker routes (U35 added /world/spend, ES-4.13).
+// the adapter reads exactly four Worker routes (U35 added /world/spend, ES-4.13; U37 /ledger/cost, from Compass U5).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -41,6 +41,17 @@ test('U34: spec/ledger-scan.v1.json validates the captured GET /ledger/scan, and
   assert.ok(validate(schema, { events: [] }).some((e) => /rows/.test(e)))
 })
 
+test('U37: spec/ledger-cost.v1.json validates GET /ledger/cost as the Worker answers it, and refuses a bucket short of a counter or a town with no name', () => {
+  const schema = read('spec/ledger-cost.v1.json')
+  // Synthetic until a live capture exists: the Worker's own handler (Compass U5) run over ZZTEST rows.
+  const answer = read('test/fixtures/ledger-cost.synthetic.json')
+  assert.deepEqual(validate(schema, answer), [])
+  assert.ok(validate(schema, { ...answer, by_town: [{ town: 'ZZTEST Client', runs_total: 1 }] }).some((e) => /by_town\[0\].*cost_usd/.test(e)))
+  assert.ok(validate(schema, { ...answer, by_town: [{ ...answer.by_town[0], town: '' }] }).some((e) => /by_town\[0\]\.town/.test(e)))
+  assert.ok(validate(schema, { ...answer, town_source: 'person' }).some((e) => /town_source/.test(e)))
+  assert.ok(!JSON.stringify(answer).includes('"actor"'), 'no per-person field')
+})
+
 test('U34: spec/pack.v1.json validates both shipped packs and carries figure ∈ {character, marker}', () => {
   const schema = read('spec/pack.v1.json')
   for (const id of ['tellefsen-campus', 'neutral']) assert.deepEqual(validate(schema, read(`overlay/packs/${id}/pack.json`)), [], id)
@@ -60,9 +71,9 @@ const walk = (dir, out = []) => {
   }
   return out
 }
-test('U34/U35: the adapter reads only /ledger/scan, /world/substrate and /world/spend — any other Worker route in server/harnesses/compass* fails', () => {
+test('U34/U35/U37: the adapter reads only /ledger/scan, /world/substrate, /world/spend and /ledger/cost — any other Worker route in server/harnesses/compass* fails', () => {
   const files = [path.join(root, 'server/harnesses/compass.mjs'), ...walk(path.join(root, 'server/harnesses/compass'))]
-  const allowed = new Set(['/ledger/scan', '/world/substrate', '/world/spend'])
+  const allowed = new Set(['/ledger/scan', '/world/substrate', '/world/spend', '/ledger/cost'])
   const hits = []
   for (const f of files) {
     const text = fs.readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
@@ -74,12 +85,17 @@ test('U34/U35: the adapter reads only /ledger/scan, /world/substrate and /world/
     // a Worker URL is built in config.mjs and nowhere else: no other file may touch eventsUrl or assemble one from a Worker field
     if (path.basename(f) !== 'config.mjs') {
       assert.ok(!/eventsUrl/.test(text), `${path.relative(root, f)} references eventsUrl — Worker URLs are config.mjs's to derive`)
-      assert.ok(!/(ledgerUrl|substrateUrl|spendUrl)\s*\.\s*(replace|slice|split|concat)\(/.test(text), `${path.relative(root, f)} rebuilds a Worker URL from a derived field`)
-      // every fetch of a Worker field is one of the two reads, verbatim
-      for (const m of text.matchAll(/fetch(?:Impl)?\s*\(\s*([^,)]+)/g)) {
+      assert.ok(!/(ledgerUrl|substrateUrl|spendUrl|ledgerCostUrl)\s*\.\s*(replace|slice|split|concat)\(/.test(text), `${path.relative(root, f)} rebuilds a Worker URL from a derived field`)
+      // U37: every Worker URL assembled anywhere — whatever it is then handed to (a variable, a retry, a cache) — is one of the reads
+      for (const m of text.matchAll(/`\$\{cfg\.(?:ledgerUrl|substrateUrl|spendUrl|ledgerCostUrl)\}[^`]*`/g)) {
+        const url = m[0]
+        assert.ok(url.startsWith('`${cfg.ledgerUrl}?since=') || url.startsWith('`${cfg.spendUrl}?window=') || url.startsWith('`${cfg.ledgerCostUrl}?days=1'), `${path.relative(root, f)} assembles a Worker URL that is not one of the reads: ${url}`)
+      }
+      // every fetch of a Worker field is one of the reads, verbatim — straight to fetch, or through spend.mjs's cached(url, …) (U37)
+      for (const m of text.matchAll(/(?:fetch(?:Impl)?|cached)\s*\(\s*([^,)]+)/g)) {
         const arg = m[1].trim()
-        if (!/ledgerUrl|substrateUrl|spendUrl|eventsUrl/.test(arg)) continue
-        assert.ok(arg === 'cfg.substrateUrl' || arg.startsWith('`${cfg.ledgerUrl}?since=') || arg.startsWith('`${cfg.spendUrl}?window='), `${path.relative(root, f)} fetches a Worker URL that is not one of the three reads: ${arg}`)
+        if (!/ledgerUrl|substrateUrl|spendUrl|ledgerCostUrl|eventsUrl/.test(arg)) continue
+        assert.ok(arg === 'cfg.substrateUrl' || arg.startsWith('`${cfg.ledgerUrl}?since=') || arg.startsWith('`${cfg.spendUrl}?window=') || arg.startsWith('`${cfg.ledgerCostUrl}?days=1'), `${path.relative(root, f)} fetches a Worker URL that is not one of the three reads: ${arg}`)
       }
     }
     for (const m of text.matchAll(/\/(?:ledger|world|ask|actions|events)(?:\/[a-z0-9_-]+)?\b/g)) {

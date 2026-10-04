@@ -23,6 +23,8 @@ export function loadConfig(env = process.env) {
     substrateCacheMs: 60_000,
     /** Sibling of EVENTS_URL: .../events → .../world/spend (U35W, ES-4.13). Same bearer; 60 s cache per window. */
     spendUrl: eventsUrl.replace(/\/events$/, '/world/spend'),
+    /** U37: today's cost per town — GET /ledger/cost (Compass U5). Same bearer, same 60 s cache. */
+    ledgerCostUrl: eventsUrl.replace(/\/events$/, '/ledger/cost'),
     spendCacheMs: 60_000,
     spendWindowDays: 30,
     /** The overlay sidecar's loopback port (overlay-api.mjs); 0 disables it (home planet only). */
@@ -36,6 +38,9 @@ export function loadConfig(env = process.env) {
     windowDays: num(env.WORLD_WINDOW_DAYS, 14),
     runningTtlMs: num(env.WORLD_RUNNING_TTL_HOURS, 2) * 3600 * 1000,
     scanCacheMs: 5000,
+    /** U37: how long a Compass read may take. The ledger scan runs 6–9 s on a normal day (measured 2026-09-07). */
+    ledgerTimeoutMs: num(env.WORLD_LEDGER_TIMEOUT_MS, 25_000),
+    compassTimeoutMs: num(env.WORLD_COMPASS_TIMEOUT_MS, 10_000),
     debug: /\bworld\b|\*/.test(env.DEBUG || ''),
   }
 }
