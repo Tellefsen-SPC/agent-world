@@ -39,6 +39,9 @@ export function normalise(body) {
   }
 }
 
+/** U37: how soon a failed substrate read is tried again. */
+const FAILED_RETRY_MS = 10_000
+
 export function createSubstrate(cfg, { fetchImpl: rawFetch = globalThis.fetch, log = () => {}, now = Date.now } = {}) {
   const fetchImpl = withTimeout(rawFetch, cfg.readTimeoutMs ?? 10_000) // U37: a deadline on every read
   let cache = { at: 0, value: null }
@@ -66,7 +69,9 @@ export function createSubstrate(cfg, { fetchImpl: rawFetch = globalThis.fetch, l
         console.warn('bot-crossing: compass — substrate unavailable —', err?.message || err)
       }
       if (!cache.value) return EMPTY
-      cache.at = now() // keep the last good answer; try again after the cache period
+      // Keep the last good answer, and try again in 10 s rather than a full cache period: the pill (U37) should
+      // clear soon after Compass is back.
+      cache.at = now() - cfg.substrateCacheMs + FAILED_RETRY_MS
     }
     return cache.value
   }

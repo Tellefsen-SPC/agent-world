@@ -72,7 +72,11 @@ export function compassNotice(compass, { timeOf = (iso) => new Date(iso).toLocal
     detail: since ? `since ${since}` : '',
     title: [
       `No answer from Compass${since ? ` since ${since}` : ''}${compass.error ? ` (${compass.error})` : ''}.`,
-      seen ? `What you see is what the world last saw, at ${seen}.` : 'Nothing has loaded yet, so the world is empty.',
+      seen
+        ? `What you see is what the world last saw, at ${seen}.`
+        : Array.isArray(compass.failing) && !compass.failing.includes('ledger')
+          ? 'The runs are current, but the map of clients and towns has not loaded yet, so towns may be missing.'
+          : 'Nothing has loaded yet, so the world is empty.',
       'It keeps trying on its own; nothing here is lost.',
     ].join(' '),
   }

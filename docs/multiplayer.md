@@ -11,11 +11,11 @@ this repo as of U37.
 | Part | Today | Where |
 |---|---|---|
 | Who is looking | One viewer per process, chosen by `WORLD_VIEWER_PRESET` (Owner by default). No login | `server/harnesses/compass/viewer.mjs` |
-| Who can reach it | Every request must carry a local `Host` (loopback, or the machine's own LAN address). A request that sends an `Origin` must send a local one. The upstream API and the adapter's sidecar apply the same rule | `server/api.mjs` `isLocalRequest` (upstream, never edited), `compass/overlay-api.mjs` |
+| Who can reach it | The upstream API wants a local `Host` (loopback, or the machine's own LAN address) on every request, and a local `Origin` whenever one is sent. The sidecar is stricter on `Host` (loopback only). It answers a GET that carries a foreign `Origin`, but without CORS headers, so a page from elsewhere cannot read the answer | `server/api.mjs` `isLocalRequest` (upstream, never edited), `compass/overlay-api.mjs` |
 | How the page finds the sidecar | `location.hostname` on port 5275: a second origin beside the page | `overlay/zones.mjs` `SIDECAR` |
 | What it reads | Four Worker routes with one bearer token, plus Notion and Airtable with their own tokens (`NOTION_TOKEN`, `AIRTABLE_TOKEN`). All of it is read on the server, never in the browser | `compass/config.mjs`, `docs/CONTRACT.md` |
-| How often | Cached on the server: ledger scan 5 s, substrate, spend and today's cost 60 s, room panels 5 min. Polls that land during a ledger scan share it. The other caches do not share an in-flight read, so viewers polling at the moment a cache expires can each trigger one | `compass.mjs` `scanThreads`, `substrate.mjs`, `spend.mjs`, `surfaces.mjs` |
-| What it writes | Only the layout files `data/colony*.json`. The browser PUTs them whole (`/api/state`, the sidecar's `/planets/<key>/state`), and the server writes one itself when it lays out a planet for the first time | `server/api.mjs`, `overlay-api.mjs`, `compass.mjs` `ensureLayouts` |
+| How often | Cached on the server: substrate, spend and today's cost 60 s; room panels 5 min. The ledger scan's 5 s cache counts from the start of the scan. A live scan takes 6–9 s, so with pages polling, scans run back to back, one at a time: polls that land during a scan share it. The other caches do not share an in-flight read, so viewers polling as a cache expires can each trigger one | `compass.mjs` `scanThreads`, `substrate.mjs`, `spend.mjs`, `surfaces.mjs` |
+| What it writes | Only the layout files `data/colony*.json`, written three ways: the browser PUTs them whole (`/api/state`, the sidecar's `/planets/<key>/state`); the server writes one when its first layout pass in a process places a new town; and the sidecar creates an empty planet file on that planet's first GET | `server/api.mjs`, `overlay-api.mjs`, `compass.mjs` `ensureLayouts` |
 | What hides spend | The overlay: `showSpend` shows the lines to the Owner only. The sidecar serves `/spend` and `/spend/today` to anyone who can reach it, which today is only the machine's owner | `overlay/spend.mjs` |
 | When Compass is down | Every read has a deadline that covers the whole answer, body included. The strip says "Compass unavailable" when the ledger scan or the substrate is failing, and shows the last thing the world saw (U37) | `compass/health.mjs` |
 
@@ -43,9 +43,12 @@ viewer's scope before it leaves the server:
 - **The sidecar (fork code):** `/world`, `/steering`, `/rooms`, `/rooms/<id>`, `/archive`, `/spend`,
   `/spend/today` and `/planets/<key>/state`. Spend answers the Owner only, and a client sees their own town,
   not the campus.
-- **The upstream API (never edited):** `/api/threads` and `/api/state`. It has no idea of a viewer. Per-viewer
-  thread lists need a fork-owned layer in front of it that filters by the signed-in scope, or a change
-  upstream.
+- **The upstream API (never edited):**
+  - It has no idea of a viewer. Per-viewer thread lists need a fork-owned layer in front of it that filters by the
+    signed-in scope, or a change upstream.
+  - Reads: `/api/threads`, `/api/harnesses`, `/api/state`.
+  - Writes: PUT `/api/state`, and POST `/api/open`, `/api/reveal` and `/api/archive`. A hosted `Origin` is already
+    refused on all of them (see 3).
 
 Tests come before the feature: for every route, a non-Owner viewer gets nothing it should not have.
 

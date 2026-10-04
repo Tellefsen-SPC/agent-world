@@ -189,7 +189,7 @@ export function createRooms(cfg, { surfaces, substrate, steering, pack, lastScan
     surfaces.stale('finance-table', 60 * 60_000, async () => {
       if (!cfg.airtableToken) throw new Error('AIRTABLE_TOKEN is not set in .env')
       const res = await fetchImpl(`https://api.airtable.com/v0/meta/bases/${cfg.airtableBaseId}/tables`, { headers: { Authorization: `Bearer ${cfg.airtableToken}` } })
-      const body = await res.json().catch(() => ({}))
+      const body = (res.ok ? await res.json() : await res.json().catch(() => ({})))
       if (!res.ok) throw new Error(`airtable meta ${res.status}: ${body.error?.type || ''}`.trim())
       const t = (body.tables || []).find((x) => /^finance$/i.test(x.name))
       if (!t) throw new Error('no table named Finance in the base')

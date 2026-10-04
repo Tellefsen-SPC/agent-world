@@ -112,7 +112,7 @@ export function createSteering(cfg, { surfaces, substrate, fetchImpl: rawFetch =
           do {
             const url = `https://api.airtable.com/v0/${cfg.airtableBaseId}/${PIPELINE_TABLE}?pageSize=100${query}${offset ? `&offset=${encodeURIComponent(offset)}` : ''}`
             const res = await fetchImpl(url, { headers: { Authorization: `Bearer ${cfg.airtableToken}` } })
-            const json = await res.json().catch(() => ({}))
+            const json = (res.ok ? await res.json() : await res.json().catch(() => ({})))
             if (!res.ok) throw Object.assign(new Error(fixAirtable(res.status)), { status: res.status, named: true })
             for (const r of json.records || []) records.push({ ...r, baseId: cfg.airtableBaseId })
             offset = json.offset || ''
@@ -216,7 +216,7 @@ export function createSteering(cfg, { surfaces, substrate, fetchImpl: rawFetch =
         do {
           const url = `https://api.airtable.com/v0/${cfg.airtableBaseId}/${PIPELINE_TABLE}?pageSize=100${offset ? `&offset=${encodeURIComponent(offset)}` : ''}`
           const res = await fetchImpl(url, { headers: { Authorization: `Bearer ${cfg.airtableToken}` } })
-          const json = await res.json().catch(() => ({}))
+          const json = (res.ok ? await res.json() : await res.json().catch(() => ({})))
           if (!res.ok) throw new Error(fixAirtable(res.status))
           for (const r of json.records || []) records.push({ ...r, baseId: cfg.airtableBaseId })
           offset = json.offset || ''

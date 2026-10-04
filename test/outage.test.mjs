@@ -68,6 +68,31 @@ test('the deadline covers the body: a Worker that sends its headers and then sta
   }
 })
 
+test('a 200 whose body runs past the deadline is an error for Notion and Airtable too — never an empty success', { timeout: 5000 }, async () => {
+  const http = await import('node:http')
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.write('{"records":[{"id":"recZZTEST","fields":{}}]')
+    setTimeout(() => res.end('}'), 400) // the body finishes after the 150 ms deadline
+  })
+  await new Promise((r) => server.listen(0, '127.0.0.1', r))
+  const base = `http://127.0.0.1:${server.address().port}`
+  const toLocal = (url, init) => fetch(String(url).replace(/^https:\/\/api\.(notion\.com|airtable\.com)/, base), init)
+  try {
+    const { createNotion } = await import(path.join(root, 'server/harnesses/compass/notion.mjs'))
+    const { createSurfaces } = await import(path.join(root, 'server/harnesses/compass/surfaces.mjs'))
+    const slow = { notionToken: 'zztest', airtableToken: 'zztest', airtableBaseId: 'appZZTEST', readTimeoutMs: 150 }
+    await assert.rejects(createNotion(slow, { fetchImpl: toLocal }).get('pages/zz'), (err) => err.name === 'TimeoutError')
+    await assert.rejects(createSurfaces(slow, { fetchImpl: toLocal }).airtable('tblZZ?pageSize=1'), (err) => err.name === 'TimeoutError')
+    // With time enough, the same answer reads as itself.
+    const patient = { ...slow, readTimeoutMs: 2000 }
+    assert.equal((await createSurfaces(patient, { fetchImpl: toLocal }).airtable('tblZZ?pageSize=1')).records.length, 1)
+  } finally {
+    server.closeAllConnections?.()
+    await new Promise((r) => server.close(r))
+  }
+})
+
 test('a long scan can be given its own deadline (the 30-day background scan)', { timeout: 5000 }, async () => {
   const ledger = createLedgerClient(cfg, { fetchImpl: (url, init) => hanging(url, init) })
   await assert.rejects(ledger.scanSince('2026-09-04T00:00:00Z', { timeoutMs: 80 }), /within 80 ms/)
@@ -82,7 +107,7 @@ test('the health record: down since the first failure, last good kept, reset by 
   health.fail(new Error('ledger read 502'))
   t += 60_000
   health.fail(new Error('ledger read 502'))
-  assert.deepEqual(health.snapshot(), { ok: false, downSince: '2026-10-04T08:01:00.000Z', lastGoodAt: '2026-10-04T08:00:00.000Z', error: 'ledger read 502' })
+  assert.deepEqual(health.snapshot(), { ok: false, downSince: '2026-10-04T08:01:00.000Z', lastGoodAt: '2026-10-04T08:00:00.000Z', error: 'ledger read 502', failing: ['ledger'] })
   health.ok()
   assert.equal(health.snapshot().ok, true)
   assert.equal(health.snapshot().downSince, null)
@@ -95,7 +120,7 @@ test('the health record covers the substrate too: the world\'s map failing is an
   health.ok('substrate')
   t += 60_000
   health.fail(new Error('fetch failed'), 'substrate')
-  assert.deepEqual(health.snapshot(), { ok: false, downSince: '2026-10-04T08:01:00.000Z', lastGoodAt: '2026-10-04T08:00:00.000Z', error: 'substrate: fetch failed' })
+  assert.deepEqual(health.snapshot(), { ok: false, downSince: '2026-10-04T08:01:00.000Z', lastGoodAt: '2026-10-04T08:00:00.000Z', error: 'substrate: fetch failed', failing: ['substrate'] })
   t += 60_000
   health.fail(new Error('ledger read 503'))
   assert.equal(health.snapshot().downSince, '2026-10-04T08:01:00.000Z', 'the earliest failure still standing')
@@ -114,8 +139,11 @@ test('the strip notice: nothing while Compass answers or the world is loading; a
   assert.equal(down.label, 'Compass unavailable')
   assert.equal(down.detail, 'since 08:01')
   assert.match(down.title, /last saw, at 08:00/)
-  const never = compassNotice({ ok: false, downSince: '2026-10-04T08:01:00Z', lastGoodAt: null, error: 'x' }, { timeOf })
+  const never = compassNotice({ ok: false, downSince: '2026-10-04T08:01:00Z', lastGoodAt: null, error: 'x', failing: ['ledger'] }, { timeOf })
   assert.match(never.title, /Nothing has loaded yet/)
+  // The ledger answers but the substrate never has: the runs on screen are current, not an empty world.
+  const mapless = compassNotice({ ok: false, downSince: '2026-10-04T08:01:00Z', lastGoodAt: null, error: 'substrate: x', failing: ['substrate'] }, { timeOf })
+  assert.match(mapless.title, /runs are current, but the map of clients and towns has not loaded yet/)
 })
 
 test('the harness against a dead Compass: no crash, no threads invented, and signals.compass says so', { timeout: 5000 }, async () => {
@@ -155,4 +183,27 @@ test('the ledger scan: a malformed answer is refused, not folded into the world'
   for (const body of [null, {}, [], { error: 'busy' }, 'x']) {
     await assert.rejects(createLedgerClient(cfg, { fetchImpl: async () => reply(200, body) }).scanSince('2026-10-04T00:00:00Z'), /not \{ events, rows \}/, JSON.stringify(body))
   }
+})
+
+test('a failed substrate read is tried again in 10 s, so the pill clears soon after Compass is back', { timeout: 5000 }, async () => {
+  const { createSubstrate } = await import(path.join(root, 'server/harnesses/compass/substrate.mjs'))
+  let t = 1_000_000
+  let up = true
+  let calls = 0
+  const fetchImpl = async () => (calls++, up ? reply(200, { version: 1, clients: [], skills: [] }) : reply(503, { error: 'busy' }))
+  const substrate = createSubstrate({ substrateUrl: 'https://compass.invalid/world/substrate', eventsBearerToken: 'tst', substrateCacheMs: 60_000, readTimeoutMs: 1000 }, { fetchImpl, now: () => t })
+  await substrate.read()
+  assert.equal(substrate.status().ok, true)
+  t += 61_000
+  up = false
+  await substrate.read()
+  assert.equal(substrate.status().ok, false)
+  up = true
+  t += 5_000
+  await substrate.read()
+  assert.equal(calls, 2, 'not yet: inside the 10 s retry')
+  t += 6_000
+  await substrate.read()
+  assert.equal(calls, 3)
+  assert.equal(substrate.status().ok, true, 'recovered 11 s after the failure, not 60')
 })

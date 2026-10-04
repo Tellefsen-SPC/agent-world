@@ -82,7 +82,7 @@ export function createSurfaces(cfg, { fetchImpl: rawFetch = globalThis.fetch, lo
   async function airtable(pathAndQuery) {
     if (!cfg.airtableToken) throw new Error('AIRTABLE_TOKEN is not set in .env')
     const res = await fetchImpl(`https://api.airtable.com/v0/${cfg.airtableBaseId}/${pathAndQuery}`, { headers: { Authorization: `Bearer ${cfg.airtableToken}` } })
-    const body = await res.json().catch(() => ({}))
+    const body = (res.ok ? await res.json() : await res.json().catch(() => ({})))
     if (!res.ok) throw new Error(`airtable ${res.status} on ${pathAndQuery.split('?')[0]}: ${body.error?.type || body.error || ''}`.trim())
     return body
   }
@@ -190,7 +190,7 @@ export function createSurfaces(cfg, { fetchImpl: rawFetch = globalThis.fetch, lo
       const res = await fetchImpl(`https://api.airtable.com/v0/${ref.base}/${ref.table}/${ref.record}`, {
         headers: { Authorization: `Bearer ${cfg.airtableToken}` },
       })
-      const body = await res.json().catch(() => ({}))
+      const body = (res.ok ? await res.json() : await res.json().catch(() => ({})))
       if (!res.ok) throw new Error(`airtable ${res.status} on ${ref.record}: ${body.error?.type || body.error || ''}`.trim())
       return PA_RESOLVED.test(String(body.fields?.Status || '').trim())
     }
