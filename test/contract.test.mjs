@@ -53,6 +53,13 @@ test('U37: spec/ledger-cost.v1.json validates GET /ledger/cost as the Worker ans
   assert.ok(!JSON.stringify(answer).includes('"actor"'), 'no per-person field')
 })
 
+test('U37: the live GET /ledger/cost capture validates too, once scripts/capture-contract.sh --cost-only has made one', (t) => {
+  const live = 'test/fixtures/ledger-cost.live.json'
+  if (!fs.existsSync(path.join(root, live))) return t.skip('not captured yet: Compass U5 is not deployed (docs/CONTRACT.md)')
+  assert.deepEqual(validate(read('spec/ledger-cost.v1.json'), read(live)), [])
+  assert.ok(!JSON.stringify(read(live)).includes('"actor"'), 'no per-person field')
+})
+
 test('U34: spec/pack.v1.json validates both shipped packs and carries figure ∈ {character, marker}', () => {
   const schema = read('spec/pack.v1.json')
   for (const id of ['tellefsen-campus', 'neutral']) assert.deepEqual(validate(schema, read(`overlay/packs/${id}/pack.json`)), [], id)
