@@ -21,7 +21,7 @@ jobs:
     steps:
       # Full history: test/invariants.test.mjs diffs src/ and the never-touch files against
       # `git merge-base HEAD upstream/main`, which needs the fork's history back to the upstream commit it is built on.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -31,7 +31,7 @@ jobs:
           git fetch --no-tags upstream main
           echo "fork base: $(git merge-base HEAD upstream/main)"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm

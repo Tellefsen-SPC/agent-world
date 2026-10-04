@@ -15,10 +15,17 @@ viewers meant ten reads of Notion.
   says which is failing, since when, and what on screen is current, old or never loaded.
 - **One read in flight per cache key.** The substrate, spend and today's cost, `surfaces.stale()` (the 5-minute
   panels), milestone progress, and the steering panels the rooms read each hold the promise of the read in flight.
-  A caller on a cold or expired key gets that read's answer, never a fallback.
+  - On a **cold** key, every caller waits for that one read and gets its answer, never a fallback.
+  - On an **expired** key, the readers differ. The substrate, spend, milestone and steering readers make their
+    callers wait for the one refresh. `stale()` (stale-while-revalidate, for the request lists and room panels)
+    hands every caller the old value at once and refreshes once behind them, so its callers see the new answer on
+    their next call. A failed refresh is retried after 30 s, and its key names the error.
 
 ## Consequences
 - A cache expiring under many viewers is one read of Compass, Notion or Airtable (`test/single-flight.test.mjs`
   counts them).
-- A slow read slows every caller waiting on it, up to that read's deadline (ADR-0003). There is no second read racing
-  the first.
+- A slow read slows every caller waiting on it, up to that read's deadline (ADR-0003). This applies to a cold key
+  anywhere, and to an expired key outside `stale()`. There is no second read racing the first.
+- With `stale()`, an expired panel or request list is up to one refresh behind. That is the price of answering at
+  once. The request lists (Pending Approval, Decisions) refresh every 15 s, so a resolved request leaves within one
+  more poll.
