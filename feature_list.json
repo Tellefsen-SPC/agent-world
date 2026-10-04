@@ -744,6 +744,52 @@
       "check": "V-U21",
       "passes": false,
       "verified": null
+    },
+    {
+      "id": "U37",
+      "category": "resilience",
+      "milestone": "M3 — the Engineering spine's U8 (Agent World backend), built 2026-10-04 · added to this list by the developer under delegated decision authority, to ratify at the next build-kickoff refresh",
+      "description": "The world when Compass is down, and today's cost per town — every read (Compass ledger scan, substrate, spend, today's cost; Notion; Airtable) has a deadline that covers the whole answer, body included; the ledger scan retries once on a network failure or 502/503/504 and refuses an answer that is not { events, rows }; polls during a scan share it; while the ledger scan or the substrate is failing the world keeps what it last saw and GET /world carries signals.compass = {ok, downSince, lastGoodAt, error, failing, seen}, which the strip draws as a 'Compass unavailable · since HH:MM' pill; a town card carries `Today · $… · N runs` from GET /ledger/cost?days=1 (Compass U5) under the Owner preset, unpriced and unmetered runs said on the line, 'unavailable' when the last answer is from an earlier UTC day; never per person (Annex III); docs/multiplayer.md says what M3 hosting needs",
+      "delivers": [
+        "Engineering spine U8"
+      ],
+      "depends_on": [
+        "U35"
+      ],
+      "external": [
+        "Compass U5 — GET /ledger/cost in tellefsen-compass-mcp (merged 2026-10-04, #13; not yet deployed)"
+      ],
+      "prereq": [
+        "U35 Built",
+        "Compass U5 deployed: GET $W/ledger/cost?days=1 answers 200 (for the Today line only)"
+      ],
+      "repo": "agent-world",
+      "files": [
+        "compass/health.mjs",
+        "compass/config.mjs (WORLD_LEDGER_TIMEOUT_MS, WORLD_LEDGER_LONG_TIMEOUT_MS, WORLD_READ_TIMEOUT_MS)",
+        "compass/supabase.mjs, substrate.mjs, spend.mjs, notion.mjs, surfaces.mjs, steering.mjs, rooms.mjs (deadlines)",
+        "compass.mjs (single-flight scan, health per source)",
+        "compass/overlay-api.mjs (GET /spend/today)",
+        "overlay/signals.mjs (compassNotice), overlay/spend.mjs (todayLine), overlay/zones.mjs, overlay/main.js (strip pill, town card line)",
+        "spec/ledger-cost.v1.json",
+        "docs/multiplayer.md, docs/CONTRACT.md"
+      ],
+      "steps": [
+        "automated: a read that does not answer gives up at its deadline and names the route; a body that stalls after its headers times out too",
+        "automated: the ledger scan retries a 503 once, never a 401, a 500 or a timeout, and gives up after a second network failure; null, {}, [], an error object are refused",
+        "automated: a 200 whose body runs past the deadline is an error for Notion and Airtable, never an empty success",
+        "automated: health per source — down since the first failure, last good kept, reset by a good read; the substrate failing is an outage while the ledger answers; a failed substrate read is retried in 10 s",
+        "automated: three concurrent polls → one ledger scan and the same answer",
+        "automated: the strip notice — nothing while Compass answers or loads; what is current, old or never loaded, per source",
+        "automated: the today reader, the sidecar's /spend/today, the Today line (cost, runs, unmetered, unpriced, no runs, unavailable, a stale day), Owner-only, no actor",
+        "automated: spec/ledger-cost.v1.json validates the answer the Worker's own handler gives; the adapter reads exactly four Worker routes and every Worker URL it assembles is one of them",
+        "live: EVENTS_URL at a closed port, then at a hanging `nc -lk 59998` → the world loads, the pill reads 'Compass unavailable · since HH:MM', signals.compass.ok false; the real URL back → the pill gone after one poll",
+        "live: with Compass U5 deployed, the ZZTEST Client town card under the Owner preset reads `Today · … · N runs`, matching GET /ledger/cost?days=1&include_test=1 for that town; nothing under another preset",
+        "npm test green; vite build bundles the overlay; git diff $(git merge-base HEAD upstream/main) -- src/ server/api.mjs server/scan.mjs server/harnesses/claude-code.mjs empty"
+      ],
+      "check": "V-U37",
+      "passes": false,
+      "verified": null
     }
   ],
   "placeholders_not_cut": {

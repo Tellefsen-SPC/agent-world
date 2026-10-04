@@ -66,18 +66,34 @@ export function benchResidents(threads, maxAgents) {
 export function compassNotice(compass, { timeOf = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) } = {}) {
   if (!compass || compass.ok !== false) return null
   const since = compass.downSince ? timeOf(compass.downSince) : null
-  const seen = compass.lastGoodAt ? timeOf(compass.lastGoodAt) : null
   return {
     label: 'Compass unavailable',
     detail: since ? `since ${since}` : '',
     title: [
       `No answer from Compass${since ? ` since ${since}` : ''}${compass.error ? ` (${compass.error})` : ''}.`,
-      seen
-        ? `What you see is what the world last saw, at ${seen}.`
-        : Array.isArray(compass.failing) && !compass.failing.includes('ledger')
-          ? 'The runs are current, but the map of clients and towns has not loaded yet, so towns may be missing.'
-          : 'Nothing has loaded yet, so the world is empty.',
+      ...whatIsOnScreen(compass, timeOf),
       'It keeps trying on its own; nothing here is lost.',
     ].join(' '),
   }
+}
+
+/**
+ * What the strip's tooltip says about the world on screen, per source: the runs come from the ledger scan, the
+ * towns from the substrate. Each is current, old (as of when it last answered), or never loaded. Older snapshots
+ * without `seen` fall back to the single lastGoodAt.
+ */
+function whatIsOnScreen(compass, timeOf) {
+  const failing = Array.isArray(compass.failing) ? compass.failing : null
+  const seen = compass.seen && typeof compass.seen === 'object' ? compass.seen : null
+  if (!failing || !seen) {
+    return [compass.lastGoodAt ? `What you see is what the world last saw, at ${timeOf(compass.lastGoodAt)}.` : 'Nothing has loaded yet, so the world is empty.']
+  }
+  const runsDown = failing.includes('ledger')
+  const townsDown = failing.includes('substrate')
+  if (runsDown && !seen.ledger) return ['Nothing has loaded yet, so the world is empty.']
+  const out = []
+  if (runsDown) out.push(`The runs are as the world last saw them, at ${timeOf(seen.ledger)}.`)
+  else out.push('The runs are current.')
+  if (townsDown) out.push(seen.substrate ? `The towns are as of ${timeOf(seen.substrate)}.` : 'The map of clients and towns has not loaded yet, so towns may be missing.')
+  return out
 }

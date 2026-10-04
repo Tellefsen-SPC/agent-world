@@ -107,7 +107,7 @@ test('the health record: down since the first failure, last good kept, reset by 
   health.fail(new Error('ledger read 502'))
   t += 60_000
   health.fail(new Error('ledger read 502'))
-  assert.deepEqual(health.snapshot(), { ok: false, downSince: '2026-10-04T08:01:00.000Z', lastGoodAt: '2026-10-04T08:00:00.000Z', error: 'ledger read 502', failing: ['ledger'] })
+  assert.deepEqual(health.snapshot(), { ok: false, downSince: '2026-10-04T08:01:00.000Z', lastGoodAt: '2026-10-04T08:00:00.000Z', error: 'ledger read 502', failing: ['ledger'], seen: { ledger: '2026-10-04T08:00:00.000Z' } })
   health.ok()
   assert.equal(health.snapshot().ok, true)
   assert.equal(health.snapshot().downSince, null)
@@ -120,7 +120,7 @@ test('the health record covers the substrate too: the world\'s map failing is an
   health.ok('substrate')
   t += 60_000
   health.fail(new Error('fetch failed'), 'substrate')
-  assert.deepEqual(health.snapshot(), { ok: false, downSince: '2026-10-04T08:01:00.000Z', lastGoodAt: '2026-10-04T08:00:00.000Z', error: 'substrate: fetch failed', failing: ['substrate'] })
+  assert.deepEqual(health.snapshot(), { ok: false, downSince: '2026-10-04T08:01:00.000Z', lastGoodAt: '2026-10-04T08:00:00.000Z', error: 'substrate: fetch failed', failing: ['substrate'], seen: { ledger: '2026-10-04T08:00:00.000Z', substrate: '2026-10-04T08:00:00.000Z' } })
   t += 60_000
   health.fail(new Error('ledger read 503'))
   assert.equal(health.snapshot().downSince, '2026-10-04T08:01:00.000Z', 'the earliest failure still standing')
@@ -139,11 +139,15 @@ test('the strip notice: nothing while Compass answers or the world is loading; a
   assert.equal(down.label, 'Compass unavailable')
   assert.equal(down.detail, 'since 08:01')
   assert.match(down.title, /last saw, at 08:00/)
-  const never = compassNotice({ ok: false, downSince: '2026-10-04T08:01:00Z', lastGoodAt: null, error: 'x', failing: ['ledger'] }, { timeOf })
+  const never = compassNotice({ ok: false, downSince: '2026-10-04T08:01:00Z', lastGoodAt: null, error: 'x', failing: ['ledger'], seen: { ledger: null } }, { timeOf })
   assert.match(never.title, /Nothing has loaded yet/)
   // The ledger answers but the substrate never has: the runs on screen are current, not an empty world.
-  const mapless = compassNotice({ ok: false, downSince: '2026-10-04T08:01:00Z', lastGoodAt: null, error: 'substrate: x', failing: ['substrate'] }, { timeOf })
-  assert.match(mapless.title, /runs are current, but the map of clients and towns has not loaded yet/)
+  const mapless = compassNotice({ ok: false, downSince: '2026-10-04T08:01:00Z', lastGoodAt: null, error: 'substrate: x', failing: ['substrate'], seen: { ledger: '2026-10-04T08:01:00Z', substrate: null } }, { timeOf })
+  assert.match(mapless.title, /The runs are current\. The map of clients and towns has not loaded yet/)
+  // The ledger had loaded, the substrate never did, then the ledger failed too: the runs are old, not absent.
+  const both = compassNotice({ ok: false, downSince: '2026-10-04T08:01:00Z', lastGoodAt: null, error: 'x', failing: ['ledger', 'substrate'], seen: { ledger: '2026-10-04T08:00:00Z', substrate: null } }, { timeOf })
+  assert.match(both.title, /The runs are as the world last saw them, at 08:00\. The map of clients and towns has not loaded yet/)
+  assert.doesNotMatch(both.title, /world is empty/)
 })
 
 test('the harness against a dead Compass: no crash, no threads invented, and signals.compass says so', { timeout: 5000 }, async () => {

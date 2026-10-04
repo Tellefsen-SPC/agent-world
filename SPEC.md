@@ -78,9 +78,18 @@ A viewer recognises the firm, not Bot Crossing: clients are towns, companies are
 
 **U35 — Spend per town and room.** Depends on U12, U28, U31 and the external U35W. Built when: hooks post usage on run_completed; the sidecar serves /spend; town cards and room panels render the line; fixture Iota reconciles; tests green; src/ untouched.
 
+**U37 — The world when Compass is down, and today's cost per town** (the Engineering spine's U8; added 2026-10-04 by the developer under delegated decision authority, to ratify at the next build-kickoff refresh). Depends on U35 and the external Compass U5 (`GET /ledger/cost`).
+- **Every read has a deadline**, body included: the ledger scan 25 s, the 30-day background scan 120 s, every other read (Compass, Notion, Airtable) 10 s. The ledger scan retries once on a network failure or a 502/503/504, and refuses an answer that is not `{ events, rows }`. A 200 whose body fails is an error, never an empty success.
+- **While the ledger scan or the substrate is failing**, the world keeps what it last saw, and the strip says "Compass unavailable · since HH:MM". Its tooltip says what on screen is current, old or never loaded.
+- **Polls during a scan share it.**
+- **A town card carries `Today · $… · N runs`**, under the Owner preset only, never per person.
+- **The adapter reads exactly four Worker routes.**
+
+Built when the V-U37 automated steps are green, a dead and a hanging Compass both give the pill with no crash, the Today line matches `GET /ledger/cost?days=1` for one town, and `src/` is untouched. Write-up: `docs/multiplayer.md`.
+
 Invariants carried from O1: `src/` byte-identical to upstream; `data/colony*.json` the only writes; no model API in the fork; the adapter never writes to the substrate; Annex III — activity and blockers, never a person's performance.
 
-Substrate reads at M2, all GET: ledger and events through `GET $EVENTS_URL/ledger/scan`; `WORLD_COMPANIES`, `AUTO_RUN_POLICY` (run_classes + skill_overrides), `DEAL_PIPELINE_STAGES`, Active `ops_clients` rows and `ops_skills` rows through `GET $EVENTS_URL/world/substrate` (U12W, live 2026-09-07, 60 s cache); spend per client, skill and model through `GET $EVENTS_URL/world/spend?window=<days>` (U35W, live 2026-09-08, 60 s cache — ES-4.13); Notion and Airtable with the tokens in `.env`. Never a Supabase URL or key on this machine.
+Substrate reads at M2, all GET: ledger and events through `GET $EVENTS_URL/ledger/scan`; `WORLD_COMPANIES`, `AUTO_RUN_POLICY` (run_classes + skill_overrides), `DEAL_PIPELINE_STAGES`, Active `ops_clients` rows and `ops_skills` rows through `GET $EVENTS_URL/world/substrate` (U12W, live 2026-09-07, 60 s cache); spend per client, skill and model through `GET $EVENTS_URL/world/spend?window=<days>` (U35W, live 2026-09-08, 60 s cache — ES-4.13); today's cost per town through `GET $EVENTS_URL/ledger/cost?days=1` (Compass U5, merged 2026-10-04, 60 s cache — U37); Notion and Airtable with the tokens in `.env`. Never a Supabase URL or key on this machine.
 
 ### O6 — The map is still, spacious and legible (M2b, Decision 2026-09-07)
 A live map of the firm's operating layer where the only things that move are things waiting on a person. Constant grammar under every pack: the context graph is the ground (entities with lifecycle state), orchestration is the lit fixture and the request, governance is the badge, the suit, the tray and the four numbers, connectors are the yard. The AI on top is never seen except when it asks.
