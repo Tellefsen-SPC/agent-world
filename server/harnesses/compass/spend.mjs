@@ -71,7 +71,7 @@ export function normaliseToday(body) {
 }
 
 export function createSpend(cfg, { fetchImpl: rawFetch = globalThis.fetch, log = () => {}, now = Date.now } = {}) {
-  const fetchImpl = withTimeout(rawFetch, cfg.compassTimeoutMs ?? 10_000) // U37: a deadline on every read
+  const fetchImpl = withTimeout(rawFetch, cfg.readTimeoutMs ?? 10_000) // U37: a deadline on every read
   const cache = new Map() // `${window}:${includeTest}` → { at, value }; U37: `today:${includeTest}` for the day's cost
   const warnedAt = new Map()
 

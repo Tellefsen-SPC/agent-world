@@ -40,9 +40,10 @@ export function normalise(body) {
 }
 
 export function createSubstrate(cfg, { fetchImpl: rawFetch = globalThis.fetch, log = () => {}, now = Date.now } = {}) {
-  const fetchImpl = withTimeout(rawFetch, cfg.compassTimeoutMs ?? 10_000) // U37: a deadline on every read
+  const fetchImpl = withTimeout(rawFetch, cfg.readTimeoutMs ?? 10_000) // U37: a deadline on every read
   let cache = { at: 0, value: null }
   let warnedAt = 0
+  let last = { ok: null, error: null } // U37: the last read's outcome, for the strip's pill
 
   async function read() {
     if (cache.value && now() - cache.at < cfg.substrateCacheMs) return cache.value
@@ -56,8 +57,10 @@ export function createSubstrate(cfg, { fetchImpl: rawFetch = globalThis.fetch, l
       }
       const value = normalise(await res.json())
       cache = { at: now(), value }
+      last = { ok: true, error: null }
       log(`substrate v${value.version}: ${value.clients.length} clients, ${value.skills.length} skills, ${(value.world_companies?.companies || []).length} companies${value.version >= 2 ? `, ${value.automations.length} automations, ${value.connectors.length} connectors, rollups ${Object.keys(value.rollups || {}).join('/') || 'none'}` : ''}`)
     } catch (err) {
+      last = { ok: false, error: err }
       if (now() - warnedAt > 60_000) {
         warnedAt = now()
         console.warn('bot-crossing: compass — substrate unavailable —', err?.message || err)
@@ -68,5 +71,5 @@ export function createSubstrate(cfg, { fetchImpl: rawFetch = globalThis.fetch, l
     return cache.value
   }
 
-  return { read, _cache: () => cache }
+  return { read, status: () => last, _cache: () => cache }
 }

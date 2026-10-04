@@ -35,6 +35,7 @@ import { PANEL_MS } from './surfaces.mjs'
 import { DECISIONS, envSources, unreadableNote } from './notion-sources.mjs'
 import { titleOf, selectName, dateStart, multiNames, relationIds } from './notion.mjs'
 import { researchRow, needsRefresh, integrationRow, isDriftOpen, isUnchecked } from './notion-rows.mjs'
+import { withTimeout } from './health.mjs'
 
 const DAY_MS = 24 * 3600 * 1000
 const str = (v) => (typeof v === 'string' ? v.trim() : '')
@@ -177,7 +178,8 @@ export function financeBuckets(records, now = Date.now()) {
   return { month, ...out }
 }
 
-export function createRooms(cfg, { surfaces, substrate, steering, pack, lastScan, log = () => {}, fetchImpl = globalThis.fetch, now = Date.now } = {}) {
+export function createRooms(cfg, { surfaces, substrate, steering, pack, lastScan, log = () => {}, fetchImpl: rawFetch = globalThis.fetch, now = Date.now } = {}) {
+  const fetchImpl = withTimeout(rawFetch, cfg.readTimeoutMs ?? 10_000) // U37: a deadline on every read
   const env = envSources()
   const packNow = () => (typeof pack === 'function' ? pack() : pack)
   const scan = () => (typeof lastScan === 'function' ? lastScan() : null) || { runs: new Map(), threads: [], projects: [], silent: [], live: new Set(), failed: new Set() }

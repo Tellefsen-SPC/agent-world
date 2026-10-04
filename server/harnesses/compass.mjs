@@ -145,7 +145,7 @@ let ranRefreshing = null
 function ranSkills(now) {
   if ((!ranCache.ran || now - ranCache.at >= RAN_MS) && !ranRefreshing) {
     ranRefreshing = ledger
-      .scanSince(new Date(now - STALE_DAYS * 24 * 3600 * 1000).toISOString())
+      .scanSince(new Date(now - STALE_DAYS * 24 * 3600 * 1000).toISOString(), { timeoutMs: cfg.ledgerLongTimeoutMs })
       .then(({ events }) => {
         ranCache = { at: now, ran: ranSkillsOf(events) }
         log(`30-day scan: ${ranCache.ran.size} skills ran`)
@@ -220,10 +220,19 @@ async function scan(now = Date.now()) {
   return threads
 }
 
-/** The scan, cached so the browser's 15 s poll costs one query burst; the last good result survives a failed read. */
-async function scanThreads() {
-  const now = Date.now()
-  if (now - scanCache.at < cfg.scanCacheMs) return scanCache.threads
+/**
+ * The scan, cached so the browser's 15 s poll costs one query burst; the last good result survives a failed read.
+ * U37: one scan at a time — polls that land while a scan runs share it, so Compass is read once however many pages
+ * poll, and a slow scan can never finish after a newer one and report an outage that is already over.
+ */
+let scanning = null
+function scanThreads() {
+  if (Date.now() - scanCache.at < cfg.scanCacheMs) return Promise.resolve(scanCache.threads)
+  scanning ||= runScan(Date.now()).finally(() => (scanning = null))
+  return scanning
+}
+
+async function runScan(now) {
   try {
     scanCache = { at: now, threads: await scan(now) }
     health.ok()
@@ -236,6 +245,10 @@ async function scanThreads() {
     health.fail(err)
     scanCache = { at: now, threads: scanCache.threads }
   }
+  // The substrate is the world's map: when it is failing, the towns on screen are old (or missing) too.
+  const sub = substrate.status?.()
+  if (sub?.ok === true) health.ok('substrate')
+  else if (sub?.ok === false) health.fail(sub.error, 'substrate')
   signals = { ...signals, compass: health.snapshot() }
   return scanCache.threads
 }

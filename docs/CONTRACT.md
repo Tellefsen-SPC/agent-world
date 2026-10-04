@@ -1,6 +1,6 @@
 # Contract v1 — the product boundary (U34, ES-6.9)
 
-Agent World is a renderer over five documents (four Worker reads and the pack). Everything it shows is read from them; nothing it does writes to them. The four JSON Schemas under `spec/` are the boundary between the Compass Worker, the packs and this fork — change them with a version, never quietly.
+Agent World is a renderer over five documents (four Worker reads and the pack). Everything it shows is read from them; nothing it does writes to them. The five JSON Schemas under `spec/` are the boundary between the Compass Worker, the packs and this fork — change them with a version, never quietly.
 
 | Document | Schema | Producer | Consumer | Guard |
 |---|---|---|---|---|
@@ -18,8 +18,13 @@ Vocabulary: ES-6.9 says *nouns* and *mirror*; the pack files and `spec/pack.v1.j
 
 Rendering a `marker` figure is M3 work; the schema carries the value so a pack can declare it now.
 
-**When Compass does not answer (U37).** Every read has a deadline (`WORLD_LEDGER_TIMEOUT_MS`, default 25 s, for
-the ledger scan; `WORLD_COMPASS_TIMEOUT_MS`, default 10 s, for the rest). The ledger scan retries once on a
-network failure or a 502/503/504, never on a timeout or a 4xx. An answer that is not the shape its schema names is
-refused, not drawn. While Compass is down the world keeps what it last saw, and `GET /world` carries
-`signals.compass = {ok, downSince, lastGoodAt, error}`, which the strip draws as a "Compass unavailable" pill.
+**When Compass does not answer (U37).** Every read has a deadline that covers the whole answer, body included:
+`WORLD_LEDGER_TIMEOUT_MS` (default 25 s) for the ledger scan, `WORLD_LEDGER_LONG_TIMEOUT_MS` (120 s) for the 30-day
+background scan, and `WORLD_READ_TIMEOUT_MS` (10 s) for every other read, Notion and Airtable included.
+- **Retries.** The ledger scan retries once on a network failure or a 502/503/504. It never retries a timeout or a
+  4xx.
+- **Answers in the wrong shape.** The ledger scan refuses an answer that is not `{ events, rows }`, and today's
+  cost refuses one without `by_town`. The substrate and spend reads keep only the keys their schemas name.
+- **While Compass is down.** The world keeps what it last saw. `GET /world` carries
+  `signals.compass = {ok, downSince, lastGoodAt, error}`, failing while the ledger scan or the substrate is failing,
+  and the strip draws it as a "Compass unavailable" pill. Polls that land during a ledger scan share it.

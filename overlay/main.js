@@ -46,7 +46,7 @@ import { wear, pack, packOf, noun, roomFor } from './pack.mjs'
 import { createLabel, Plot, PLOT_PALETTE, hashString, worldToHex } from '../src/world/plots.js'
 import { artifactRows, BubbleTracker, newestArtifactAt, bubbleEligible } from './artifacts.mjs'
 import { shelfSections, projectTab } from './archive.mjs'
-import { foldSpend, spendLineFor, estLineFor, townLines, todayLineFor, showSpend, summary as spendSummary } from './spend.mjs'
+import { foldSpend, spendLineFor, estLineFor, townLines, todayLineFor, todayIsCurrent, showSpend, summary as spendSummary } from './spend.mjs'
 import { intrayRows, nextRow, withHands } from './intray.mjs'
 import { ApproveTracker, approveIntent } from './approve.mjs'
 
@@ -588,7 +588,8 @@ function todayLineHtml(name) {
   const line = todayLineFor(spendToday, name, { viewer: getWorld()?.viewer, pack: pack(), fold: spendFold })
   if (!line) return ''
   const quiet = /no runs|unavailable/.test(line)
-  return lineHtml(line, quiet ? 'quiet' : '', quiet && spendToday?.error ? `today's cost — ${spendToday.error}` : TODAY_TITLE())
+  const why = spendToday?.error ? `today's cost — ${spendToday.error}` : !todayIsCurrent(spendToday) ? `today's cost — the last answer is from ${String(spendToday?.since || '').slice(0, 10)}; Compass has not answered today` : ''
+  return lineHtml(line, quiet ? 'quiet' : '', why || TODAY_TITLE())
 }
 /** The line for a place, or '' — spendLineFor is the Owner-only / pack gate; a failed read says so instead of zeros. */
 function spendLineHtml(bucket) {
@@ -824,6 +825,7 @@ function pinFixtures() {
 }
 /** The strip (ES-6.5): need you · blocked · running · shipped today, over the HUD's own count pills. */
 let strip = null
+let stripHtml = ''
 function syncStrip() {
   const bc = window.botCrossing
   const stats = document.querySelector('.hud .stats')
@@ -847,7 +849,10 @@ function syncStrip() {
   const html =
     (down ? `<div class="pill down" data-key="down" title="${esc(down.title)}"><i></i><b>${esc(down.label)}</b><span>${esc(down.detail)}</span></div>` : '') +
     pills.map(([cls, n, label, title]) => `<div class="pill ${cls}" data-key="${cls}" data-empty="${!n}" title="${esc(title)}"><i></i><b>${n}</b><span>${label}</span></div>`).join('')
-  if (strip.innerHTML !== html) {
+  // Compared with what was last written, not with innerHTML: the browser serialises an escaped quote back unescaped,
+  // so innerHTML never equals the escaped string and the strip — tooltip and all — would be rebuilt every second.
+  if (stripHtml !== html) {
+    stripHtml = html
     strip.innerHTML = html
     strip.querySelector('.pill.wait')?.addEventListener('click', () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n' })))
     strip.querySelector('.pill.block')?.addEventListener('click', () => {

@@ -401,7 +401,7 @@ test('U37: a town card reads today\'s line — cost and runs, unmetered and none
   const { todayLine, todayLineFor, todayRowFor } = await import(path.join(root, 'overlay/spend.mjs'))
   const { loadPack } = await import(path.join(root, 'server/harnesses/compass/pack.mjs'))
   const campus = loadPack('tellefsen-campus'); const neutral = loadPack('neutral')
-  const opts = { viewer: owner, pack: campus, fold: null }
+  const opts = { viewer: owner, pack: campus, fold: null, now: Date.parse('2026-10-04T09:30:00Z') }
   assert.equal(todayLineFor(TODAY, 'ZZTEST Client', opts), 'Today · $1.25 · 3 runs · 1 unmetered')
   assert.equal(todayLineFor(TODAY, 'ZZTEST Idle', opts), 'Today · unmetered · 1 run')
   assert.equal(todayLineFor(TODAY, 'ZZTEST Nowhere', opts), 'Today · no runs')
@@ -410,6 +410,10 @@ test('U37: a town card reads today\'s line — cost and runs, unmetered and none
   for (const viewer of [{ preset: 'operator' }, { preset: 'client' }, null]) assert.equal(todayLineFor(TODAY, 'ZZTEST Client', { ...opts, viewer }), '')
   assert.equal(todayLineFor(TODAY, 'ZZTEST Client', { ...opts, pack: neutral }), '')
   assert.equal(todayLine(todayRowFor(TODAY, 'ZZTEST Client'), { currency: 'OMR', omrPerUsd: 0.3845 }), 'Today · 0.481 OMR · 3 runs · 1 unmetered')
+  // An unpriced run (a model MODEL_PRICING does not name) is said on the line, as the 30-day line says it: never silently short.
+  assert.equal(todayLine(b({ town: 'X', runs_total: 3, runs_metered: 3, runs_unpriced: 1, cost_usd: 0.21 })), 'Today · $0.21 · 3 runs · 1 unpriced')
+  // A kept answer from an earlier UTC day is not today's cost.
+  assert.equal(todayLineFor(TODAY, 'ZZTEST Client', { ...opts, now: Date.parse('2026-10-05T09:30:00Z') }), 'Today · unavailable')
   for (const f of ['overlay/spend.mjs', 'server/harnesses/compass/spend.mjs', 'overlay/zones.mjs']) {
     assert.ok(!/actor/i.test(fs.readFileSync(path.join(root, f), 'utf8')), `${f} names a person-shaped field`)
   }

@@ -50,6 +50,29 @@ test('the ledger scan gives up after a second network failure', { timeout: 5000 
   assert.equal(calls, 2)
 })
 
+test('the deadline covers the body: a Worker that sends its headers and then stalls is an outage, not a hang', { timeout: 5000 }, async () => {
+  const http = await import('node:http')
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.write('{"events":[') // …and nothing more
+  })
+  await new Promise((r) => server.listen(0, '127.0.0.1', r))
+  const url = `http://127.0.0.1:${server.address().port}/ledger/scan`
+  try {
+    const started = Date.now()
+    await assert.rejects(createLedgerClient({ ...cfg, ledgerUrl: url, ledgerTimeoutMs: 150 }).scanSince('2026-10-04T00:00:00Z'), (err) => err.name === 'TimeoutError' && /did not answer within 150 ms/.test(err.message))
+    assert.ok(Date.now() - started < 2000)
+  } finally {
+    server.closeAllConnections?.()
+    await new Promise((r) => server.close(r))
+  }
+})
+
+test('a long scan can be given its own deadline (the 30-day background scan)', { timeout: 5000 }, async () => {
+  const ledger = createLedgerClient(cfg, { fetchImpl: (url, init) => hanging(url, init) })
+  await assert.rejects(ledger.scanSince('2026-09-04T00:00:00Z', { timeoutMs: 80 }), /within 80 ms/)
+})
+
 test('the health record: down since the first failure, last good kept, reset by a good scan', { timeout: 5000 }, () => {
   let t = Date.parse('2026-10-04T08:00:00Z')
   const health = createHealth({ now: () => t })
@@ -63,6 +86,23 @@ test('the health record: down since the first failure, last good kept, reset by 
   health.ok()
   assert.equal(health.snapshot().ok, true)
   assert.equal(health.snapshot().downSince, null)
+})
+
+test('the health record covers the substrate too: the world\'s map failing is an outage even while the ledger answers', { timeout: 5000 }, () => {
+  let t = Date.parse('2026-10-04T08:00:00Z')
+  const health = createHealth({ now: () => t })
+  health.ok()
+  health.ok('substrate')
+  t += 60_000
+  health.fail(new Error('fetch failed'), 'substrate')
+  assert.deepEqual(health.snapshot(), { ok: false, downSince: '2026-10-04T08:01:00.000Z', lastGoodAt: '2026-10-04T08:00:00.000Z', error: 'substrate: fetch failed' })
+  t += 60_000
+  health.fail(new Error('ledger read 503'))
+  assert.equal(health.snapshot().downSince, '2026-10-04T08:01:00.000Z', 'the earliest failure still standing')
+  assert.match(health.snapshot().error, /ledger read 503; substrate: fetch failed|substrate: fetch failed; ledger read 503/)
+  health.ok('substrate')
+  health.ok()
+  assert.equal(health.snapshot().ok, true)
 })
 
 test('the strip notice: nothing while Compass answers or the world is loading; a plain sentence when it does not', { timeout: 5000 }, () => {
@@ -79,7 +119,13 @@ test('the strip notice: nothing while Compass answers or the world is loading; a
 })
 
 test('the harness against a dead Compass: no crash, no threads invented, and signals.compass says so', { timeout: 5000 }, async () => {
-  process.env.EVENTS_URL = 'http://127.0.0.1:9/events' // nothing listens on the discard port
+  // A port that was free a moment ago: the connection is refused (port 9 would be refused by fetch itself).
+  const net = await import('node:net')
+  const probe = net.createServer()
+  await new Promise((r) => probe.listen(0, '127.0.0.1', r))
+  const port = probe.address().port
+  await new Promise((r) => probe.close(r))
+  process.env.EVENTS_URL = `http://127.0.0.1:${port}/events`
   process.env.EVENTS_BEARER_TOKEN = 'tst'
   process.env.WORLD_OVERLAY_PORT = '0'
   const { default: harness, _internals } = await import(path.join(root, 'server/harnesses/compass.mjs'))
@@ -105,5 +151,8 @@ test('the ledger scan: a malformed answer is refused, not folded into the world'
   for (const body of [{ events: 'x', rows: [] }, { events: [], rows: {} }]) {
     await assert.rejects(createLedgerClient(cfg, { fetchImpl: async () => reply(200, body) }).scanSince('2026-10-04T00:00:00Z'), /not \{ events, rows \}/)
   }
-  assert.deepEqual(await createLedgerClient(cfg, { fetchImpl: async () => reply(200, null) }).scanSince('2026-10-04T00:00:00Z'), { events: [], rows: [] })
+  // null, {} and an error object are not an empty ledger: read as one, every run would vanish and Compass look healthy.
+  for (const body of [null, {}, [], { error: 'busy' }, 'x']) {
+    await assert.rejects(createLedgerClient(cfg, { fetchImpl: async () => reply(200, body) }).scanSince('2026-10-04T00:00:00Z'), /not \{ events, rows \}/, JSON.stringify(body))
+  }
 })

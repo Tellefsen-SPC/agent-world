@@ -29,6 +29,7 @@
 import { createNotion, titleOf, selectName, multiNames, relationIds, dateStart, richText } from './notion.mjs'
 import { PROJECTS, DECISIONS, envSources, unreadableNote } from './notion-sources.mjs'
 import { healthRow, isOpenFinding, HEALTH_OPEN_FILTER, HEALTH_SORT } from './notion-rows.mjs'
+import { withTimeout } from './health.mjs'
 export const PENDING_APPROVAL_TABLE = 'tbleRnuppbr0wpsaM'
 export const CLIENTS_TABLE = 'tbl3JYj8WwS3kSrN4'
 export const REQUEST_MS = 15_000
@@ -58,7 +59,8 @@ export function airtableRef(url) {
 /** Pure: can this gate be verified on a surface at all? (needs a cross-checkable surface and a real link) */
 export const crossCheckable = (gate) => Boolean(gate && CROSS.has(gate.surface) && /^https?:\/\//.test(gate.ref_url || ''))
 
-export function createSurfaces(cfg, { fetchImpl = globalThis.fetch, log = () => {}, now = Date.now } = {}) {
+export function createSurfaces(cfg, { fetchImpl: rawFetch = globalThis.fetch, log = () => {}, now = Date.now } = {}) {
+  const fetchImpl = withTimeout(rawFetch, cfg.readTimeoutMs ?? 10_000) // U37: a deadline on every read
   const warned = new Map()
   const warn = (key, msg) => {
     const t = now()

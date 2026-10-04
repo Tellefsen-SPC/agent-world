@@ -218,9 +218,14 @@ export function townLines(b, { viewer, pack, fold } = {}) {
 /**
  * U37 — today's line on a town card, from the Worker's GET /ledger/cost?days=1 (Compass U5) through the sidecar's
  * /spend/today: the UTC day so far, priced by the same code as the 30-day line, the town's own by_town row.
- *   `Today · $1.23 · 4 runs`   `Today · unmetered · 2 runs`   `Today · no runs`   `Today · unavailable` (the read failed)
- * Under the same gate as every spend line — the Owner preset, a pack that shows spend — and never per person.
+ *   `Today · $1.23 · 4 runs`   `Today · unmetered · 2 runs`   `Today · no runs`
+ *   `Today · unavailable` — the read failed, or the last answer is from an earlier UTC day (a kept answer from
+ *   23:59 is not today's cost at 09:30)
+ * The unmetered and unpriced counts ride on the line as they do on the 30-day one, so a total is never silently
+ * short. Under the same gate as every spend line — the Owner preset, a pack that shows spend — never per person.
  */
+export const todayIsCurrent = (today, now = Date.now()) =>
+  !today?.since || String(today.since).slice(0, 10) === new Date(now).toISOString().slice(0, 10)
 export function todayRowFor(today, town) {
   const name = str(town)
   return (Array.isArray(today?.by_town) ? today.by_town : []).find((r) => str(r?.town) === name) || null
@@ -231,11 +236,12 @@ export function todayLine(row, { currency = 'USD', omrPerUsd = null } = {}) {
   const cost = num(row.runs_metered) > 0 ? money(row.cost_usd, { currency, omrPerUsd }) : 'unmetered'
   let line = `Today · ${cost} · ${runs} run${runs === 1 ? '' : 's'}`
   if (num(row.runs_metered) > 0 && num(row.runs_unmetered) > 0) line += ` · ${num(row.runs_unmetered)} unmetered`
+  if (num(row.runs_unpriced) > 0) line += ` · ${num(row.runs_unpriced)} unpriced`
   return line
 }
-export function todayLineFor(today, town, { viewer, pack, fold } = {}) {
+export function todayLineFor(today, town, { viewer, pack, fold, now = Date.now() } = {}) {
   if (!showSpend(viewer, pack) || !today) return ''
-  if (today.error) return 'Today · unavailable'
+  if (today.error || !todayIsCurrent(today, now)) return 'Today · unavailable'
   return todayLine(todayRowFor(today, town), lineOpts(pack, fold))
 }
 

@@ -8,10 +8,12 @@
  * Never a PATCH, PUT or DELETE. Never a body on a GET. Tokens stay in cfg.
  */
 import { isAllowed } from './notion-sources.mjs'
+import { withTimeout } from './health.mjs'
 
 export const NOTION_VERSION = '2025-09-03'
 
-export function createNotion(cfg, { fetchImpl = globalThis.fetch, env = process.env } = {}) {
+export function createNotion(cfg, { fetchImpl: rawFetch = globalThis.fetch, env = process.env } = {}) {
+  const fetchImpl = withTimeout(rawFetch, cfg.readTimeoutMs ?? 10_000) // U37: a deadline on every read
   const headers = () => {
     if (!cfg.notionToken) throw Object.assign(new Error('NOTION_TOKEN is not set in .env'), { status: 0 })
     return { Authorization: `Bearer ${cfg.notionToken}`, 'Notion-Version': NOTION_VERSION }

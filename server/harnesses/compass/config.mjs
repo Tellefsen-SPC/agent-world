@@ -38,9 +38,14 @@ export function loadConfig(env = process.env) {
     windowDays: num(env.WORLD_WINDOW_DAYS, 14),
     runningTtlMs: num(env.WORLD_RUNNING_TTL_HOURS, 2) * 3600 * 1000,
     scanCacheMs: 5000,
-    /** U37: how long a Compass read may take. The ledger scan runs 6–9 s on a normal day (measured 2026-09-07). */
+    /**
+     * U37: how long a read may take. The ledger scan runs 6–9 s on a normal day (measured 2026-09-07); the 30-day
+     * background scan (U17 hand-raise) reads about twice the window, off the poll's path, so it waits longer;
+     * every other read — Compass substrate and spend, Notion, Airtable — is small.
+     */
     ledgerTimeoutMs: num(env.WORLD_LEDGER_TIMEOUT_MS, 25_000),
-    compassTimeoutMs: num(env.WORLD_COMPASS_TIMEOUT_MS, 10_000),
+    ledgerLongTimeoutMs: num(env.WORLD_LEDGER_LONG_TIMEOUT_MS, 120_000),
+    readTimeoutMs: num(env.WORLD_READ_TIMEOUT_MS, 10_000),
     debug: /\bworld\b|\*/.test(env.DEBUG || ''),
   }
 }

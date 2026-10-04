@@ -240,8 +240,12 @@ Absorbed 2026-09-07 by U29 (ES-6.4): prospects are not plots; the warmth (1.0 / 
 
 ## V-U37 — When Compass is down, and today's cost (Engineering spine U8)
 - **Setup:** none for the first half. For the second half, Compass U5 deployed (`GET $W/ledger/cost?days=1` answers 200) and at least one ZZTEST run ended today (`scripts/zztest-seed.sh`, then one run's `run_completed`).
-- **Do (Compass down):** stop the world. In `.env`, set `EVENTS_URL=http://127.0.0.1:9/events` (nothing listens there) and start it with `./dev.sh`. Open http://127.0.0.1:5274. Wait one poll. Hover the red pill. Then put the real `EVENTS_URL` back and restart.
-- **See (Compass down):** the world loads, with no crash and no error page. The strip's first pill reads **Compass unavailable · since HH:MM**, and its tooltip says nothing has loaded yet. `curl -s 127.0.0.1:5275/world` carries `"compass":{"ok":false,…}` under `signals`. With the real URL back, the pill is gone after one poll.
+- **Do (Compass down):** stop the world. In `.env`, set `EVENTS_URL=http://127.0.0.1:59998/events` (nothing listens there). Start the world with `./dev.sh`, open http://127.0.0.1:5274, wait one poll, and hover the red pill. Then try **Compass hanging**: in a second terminal run `nc -lk 59998`, which accepts and never answers. Restart the world and wait about 30 s. Finally, stop `nc`, put the real `EVENTS_URL` back, and restart.
+- **See (Compass down):**
+  - Both times, the world loads with no crash and no error page.
+  - The strip's first pill reads **Compass unavailable · since HH:MM**, and its tooltip says nothing has loaded yet. For the hanging case, the pill appears once the 25 s deadline passes.
+  - `curl -s 127.0.0.1:5275/world` carries `"compass":{"ok":false,…}` under `signals`.
+  - With the real URL back, the pill is gone after one poll.
 - **Do (today's cost):** click the ZZTEST Client town plot, under the Owner preset, with `?include_test=1` on the page.
 - **See (today's cost):** under the 30-day line, a line reading `Today · $… · N runs`, matching `curl -s -H "Authorization: Bearer $EVENTS_BEARER_TOKEN" "$W/ledger/cost?days=1&include_test=1"` for that town. A town with nothing today reads `Today · no runs`. Under `WORLD_VIEWER_PRESET=viewer` there is no line.
 - **Fail looks like:**
