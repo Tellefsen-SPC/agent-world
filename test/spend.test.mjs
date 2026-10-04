@@ -174,12 +174,12 @@ test('U35: the sidecar serves GET /spend and /spend?window=n&include_test=1 from
   const { createOverlayApi, startOverlayApi } = await import(path.join(root, 'server/harnesses/compass/overlay-api.mjs'))
   const world = { planets: [{ key: 'zz', home: true }], towns: [], campus: { name: 'ZZ' } }
   const spend = { read: async ({ window, includeTest } = {}) => ({ at: 'x', window_days: window === undefined ? 30 : Number(window), includeTest: Boolean(includeTest), by_client: [] }) }
-  const api = await startOverlayApi(createOverlayApi({ getWorld: async () => world, descriptor: async () => world, spend }), { port: 0 })
+  const api = await startOverlayApi(createOverlayApi({ getWorld: async () => world, descriptor: async () => world, viewerFor: () => ({ preset: 'owner' }), spend }), { port: 0 })
   const get = (p) => new Promise((resolve, reject) => http.get({ host: '127.0.0.1', port: api.port, path: p }, (res) => { let s = ''; res.on('data', (c) => (s += c)); res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(s || '{}') })) }).on('error', reject))
   assert.deepEqual((await get('/spend')).body, { at: 'x', window_days: 30, includeTest: false, by_client: [] })
   assert.deepEqual((await get('/spend?window=7&include_test=1')).body, { at: 'x', window_days: 7, includeTest: true, by_client: [] })
   await api.close()
-  const bare = await startOverlayApi(createOverlayApi({ getWorld: async () => world, descriptor: async () => world }), { port: 0 })
+  const bare = await startOverlayApi(createOverlayApi({ getWorld: async () => world, descriptor: async () => world, viewerFor: () => ({ preset: 'owner' }) }), { port: 0 })
   const status = await new Promise((resolve, reject) => http.get({ host: '127.0.0.1', port: bare.port, path: '/spend' }, (res) => resolve(res.statusCode)).on('error', reject))
   assert.equal(status, 404)
   await bare.close()
@@ -388,11 +388,11 @@ test('U37: the sidecar serves GET /spend/today from the reader, 404 without it',
   const world = { planets: [{ key: 'zz', home: true }], towns: [], campus: { name: 'ZZ' } }
   const get = (port, p) => new Promise((resolve, reject) => http.get({ host: '127.0.0.1', port, path: p }, (res) => { let s = ''; res.on('data', (c) => (s += c)); res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(s || '{}') })) }).on('error', reject))
   const spend = { read: async () => ({}), today: async ({ includeTest } = {}) => ({ at: 'x', includeTest: Boolean(includeTest), by_town: [] }) }
-  const api = await startOverlayApi(createOverlayApi({ getWorld: async () => world, descriptor: async () => world, spend }), { port: 0 })
+  const api = await startOverlayApi(createOverlayApi({ getWorld: async () => world, descriptor: async () => world, viewerFor: () => ({ preset: 'owner' }), spend }), { port: 0 })
   assert.deepEqual((await get(api.port, '/spend/today')).body, { at: 'x', includeTest: false, by_town: [] })
   assert.deepEqual((await get(api.port, '/spend/today?include_test=1')).body, { at: 'x', includeTest: true, by_town: [] })
   await api.close()
-  const old = await startOverlayApi(createOverlayApi({ getWorld: async () => world, descriptor: async () => world, spend: { read: async () => ({}) } }), { port: 0 })
+  const old = await startOverlayApi(createOverlayApi({ getWorld: async () => world, descriptor: async () => world, viewerFor: () => ({ preset: 'owner' }), spend: { read: async () => ({}) } }), { port: 0 })
   assert.equal((await get(old.port, '/spend/today')).status, 404)
   await old.close()
 })

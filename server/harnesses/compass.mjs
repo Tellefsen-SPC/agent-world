@@ -113,6 +113,9 @@ function ensureOverlayApi() {
     rooms, // U31: GET /rooms, GET /rooms/<id>
     archive, // U32: GET /archive
     spend, // U35: GET /spend — the Worker's spend object; the overlay folds it through the pack (overlay/spend.mjs)
+    // Who is asking: today the one viewer from WORLD_VIEWER_PRESET; at M3 the identity Cloudflare Access hands the request
+    // (docs/adr/0006). The sidecar answers spend to the Owner only and takes a layout write only with `layout`.
+    viewerFor: () => viewer,
     // U20: the prospect rows ride with the world (one Airtable GET a minute); the overlay decides who stands and how faded.
     descriptor: async () => {
       const w = world || (await currentWorld().catch(() => deriveWorld(null, { campus: CAMPUS, tenant: cfg.tenant })))

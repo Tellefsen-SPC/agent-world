@@ -15,8 +15,8 @@ this repo as of U37.
 | How the page finds the sidecar | `location.hostname` on port 5275: a second origin beside the page | `overlay/zones.mjs` `SIDECAR` |
 | What it reads | Four Worker routes with one bearer token, plus Notion and Airtable with their own tokens (`NOTION_TOKEN`, `AIRTABLE_TOKEN`). All of it is read on the server, never in the browser | `compass/config.mjs`, `docs/CONTRACT.md` |
 | How often | Cached on the server: substrate, spend and today's cost 60 s; room panels 5 min. The ledger scan's 5 s cache counts from the start of the scan. A live scan takes 6–9 s, so with pages polling, scans run back to back, one at a time: polls that land during a scan share it. The other caches do not share an in-flight read, so viewers polling as a cache expires can each trigger one | `compass.mjs` `scanThreads`, `substrate.mjs`, `spend.mjs`, `surfaces.mjs` |
-| What it writes | Only the layout files `data/colony*.json`, written three ways: the browser PUTs them whole (`/api/state`, the sidecar's `/planets/<key>/state`); the server writes one when its first layout pass in a process places a new town; and the sidecar creates an empty planet file on that planet's first GET | `server/api.mjs`, `overlay-api.mjs`, `compass.mjs` `ensureLayouts` |
-| What hides spend | The overlay: `showSpend` shows the lines to the Owner only. The sidecar serves `/spend` and `/spend/today` to anyone who can reach it, which today is only the machine's owner | `overlay/spend.mjs` |
+| What it writes | Only the layout files `data/colony*.json`, written three ways: the browser PUTs them whole (`/api/state`, the sidecar's `/planets/<key>/state`); the server writes one when its first layout pass in a process places a new town; and the sidecar creates an empty planet file on that planet's first GET. The sidecar's PUT needs a viewer with the `layout` capability (Owner); anyone else gets 403 (2026-10-04) | `server/api.mjs`, `overlay-api.mjs`, `compass.mjs` `ensureLayouts` |
+| What hides spend | The server first: the sidecar answers `/spend` and `/spend/today` with 403 `{error}` unless the viewer preset is Owner, before it reads the Worker (2026-10-04). The overlay's `showSpend` is the second line | `compass/overlay-api.mjs`, `overlay/spend.mjs` |
 | When Compass is down | Every read has a deadline that covers the whole answer, body included. The strip says "Compass unavailable" when the ledger scan or the substrate is failing, and shows the last thing the world saw (U37) | `compass/health.mjs` |
 
 The viewer was built for this day. `viewer.mjs` passes a viewer everywhere "so M3 can swap in an identity
@@ -41,8 +41,11 @@ Today the Owner-only rules (spend, content signatures, the surfaces each preset 
 applies them and only the owner can reach the server. Once others can reach it, every route is cut to the
 viewer's scope before it leaves the server:
 - **The sidecar (fork code):** `/world`, `/steering`, `/rooms`, `/rooms/<id>`, `/archive`, `/spend`,
-  `/spend/today` and `/planets/<key>/state`. Spend answers the Owner only, and a client sees their own town,
-  not the campus.
+  `/spend/today` and `/planets/<key>/state`. A client sees their own town, not the campus.
+  - **Done (2026-10-04):** `/spend` and `/spend/today` answer the Owner only, and a PUT to
+    `/planets/<key>/state` needs the `layout` capability. Both ask `viewerFor(req)`, so M3 changes who the viewer
+    is, not the rule. With no viewer the answer is no (`test/sidecar-gates.test.mjs`).
+  - Still to do: cut `/world`, `/steering`, `/rooms` and `/archive` to the viewer's scope.
 - **The upstream API (never edited):**
   - It has no idea of a viewer. Per-viewer thread lists need a fork-owned layer in front of it that filters by the
     signed-in scope, or a change upstream.
@@ -59,7 +62,8 @@ not local, and it is never edited:
   as today, and that layout is what the hosted world serves.
 - The server's own first layout (`ensureLayouts`, the U29 generator) still works: it is deterministic and
   needs no browser.
-- The sidecar's `/planets/<key>/state` PUT (fork code) should follow the same rule, Owner and local only.
+- The sidecar's `/planets/<key>/state` PUT (fork code) follows the same rule: it needs a local `Origin` and,
+  since 2026-10-04, a viewer with the `layout` capability (Owner).
 
 **4. Hosting is mostly fork changes, and `api.mjs` stays untouched.** The world is a Node server
 (`server/serve.mjs`: the built page, the upstream API, and the adapter's sidecar), not a static site.
