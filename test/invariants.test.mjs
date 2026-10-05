@@ -159,3 +159,25 @@ test('the rules say what is true of tokens: the fork calls no model, and the PA 
   assert.match(claude, /The fork calls no model/)
   assert.match(claude, /The PA spends tokens, but on the Worker/)
 })
+
+test('the rules agree on actor (confirmation review 1, 3): SPEC and CLAUDE.md both note the backstop; ADR-0008 and V-U16 say plainly that naming Christoffer is withheld', () => {
+  const read = (f) => fs.readFileSync(path.join(root, f), 'utf8')
+  const spec = read('SPEC.md')
+  const line = spec.split('\n').find((l) => l.startsWith('- Annex III: `actor` draws an avatar'))
+  assert.ok(line, 'SPEC.md keeps its Annex III line')
+  assert.match(line, /2026-10-05, by the developer under delegated authority, to ratify/)
+  assert.match(line, /backstop/)
+  assert.match(line, /never shows, stores, ranks or logs them/)
+  assert.match(read('CLAUDE.md'), /deny-list: the PA's backstop/)
+  assert.match(read('docs/adr/0008-the-pa-is-asked-through-the-sidecar.md'), /"Alpha waits on Christoffer's approval\." is withheld/)
+  assert.match(read('VERIFICATION.md'), /\*\*Expect this withheld:\*\* an answer that names Christoffer/)
+})
+
+test('VERIFICATION and RUNBOOK cite the Compass repo\'s ADR and RUNBOOK by number AND title (confirmation review 5)', () => {
+  const read = (f) => fs.readFileSync(path.join(root, f), 'utf8')
+  const v = read('VERIFICATION.md')
+  assert.match(v, /ADR-0012, "`POST \/ask`: the PA is a governed run on the Worker"/)
+  assert.match(v, /RUNBOOK §13 · "The PA route — `POST \/ask`"/)
+  assert.ok(!/\(ADR-0009 in the Compass repo\)|RUNBOOK §9;/.test(v), 'the old numbers alone are gone')
+  assert.match(read('RUNBOOK.md'), /RUNBOOK §13 · "The PA route — `POST \/ask`"/)
+})
