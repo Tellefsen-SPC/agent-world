@@ -148,10 +148,14 @@ export function cutTo(schema, candidate) {
 }
 
 const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null)
-const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : v === null ? null : undefined)
+/**
+ * A string from the Worker, the bearer cut out FIRST and only then cut to `max` — the other way round, a token
+ * straddling the cut lost its tail to the slice and kept its head past the scrub (confirmation review 4).
+ */
+const strOf = (secrets) => (v, max) => (typeof v === 'string' ? scrub(v, secrets).slice(0, max) : v === null ? null : undefined)
 
 /** One "Based on" entry: what the Worker read (or named and did not read), as a reference and a label. */
-function basedOnEntry(v) {
+function basedOnEntry(v, str) {
   const b = obj(v) || {}
   return { ref: str(b.ref, 300), label: str(b.label, 300), read: b.read, rows: b.rows, version: str(b.version, 40), note: str(b.note, 300) }
 }
@@ -164,12 +168,13 @@ const withoutUndefined = (o) => (o ? Object.fromEntries(Object.entries(o).filter
 export function normaliseAnswer(body, { secrets = [] } = {}) {
   const b = obj(body)
   if (!b || typeof b.answer !== 'string' || !b.answer.trim()) return null
+  const str = strOf(secrets)
   const usage = obj(b.usage)
   const ledger = obj(b.ledger)
   const candidate = scrub(
     {
-      answer: b.answer.slice(0, 20_000),
-      based_on: (Array.isArray(b.based_on) ? b.based_on : []).slice(0, 40).map((e) => withoutUndefined(basedOnEntry(e))),
+      answer: str(b.answer, 20_000),
+      based_on: (Array.isArray(b.based_on) ? b.based_on : []).slice(0, 40).map((e) => withoutUndefined(basedOnEntry(e, str))),
       run_id: str(b.run_id, 64),
       model: str(b.model, 120),
       provider: str(b.provider, 40),
@@ -188,6 +193,7 @@ export function normaliseAnswer(body, { secrets = [] } = {}) {
 /** An error's body cut to the contract: the Worker's code and sentence, the PA's run id when it has one, the wait on a 429. */
 export function normaliseError(status, body, retryAfter = null, { secrets = [] } = {}) {
   const b = obj(body) || {}
+  const str = strOf(secrets)
   const candidate = scrub(
     {
       error: str(b.error, 80),

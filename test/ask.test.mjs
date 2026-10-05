@@ -442,3 +442,18 @@ test('U16 (review 5): the forwarder withholds an answer that names a person — 
     await worker.close()
   }
 })
+
+test('U16W (confirmation review 4): the bearer is cut out BEFORE any string is cut short — one straddling the 1000-character detail or the 20,000-character answer leaks no part of itself', async () => {
+  const { normaliseAnswer, normaliseError, secretsOf } = await import(path.join(root, 'server/harnesses/compass/ask.mjs'))
+  const T = 'Qk7vRtb-bearer-0123456789abcdef'
+  const secrets = secretsOf(T)
+  const head = T.slice(0, 6)
+  // the token starts 4 characters before each cut, so a cut-then-strip keeps those 4 (and the first 6 are checked)
+  const err = normaliseError(502, { error: 'provider_failed', detail: `${'d'.repeat(996)}${T} and after` }, null, { secrets })
+  assert.ok(!err.detail.includes(head) && !err.detail.includes(T.slice(0, 4)), `detail leaks nothing: …${err.detail.slice(-20)}`)
+  const ans = normaliseAnswer({ ...cases.answer.body, answer: `${'a'.repeat(19_996)}${T} and after`, based_on: [{ ref: `${'r'.repeat(296)}${T}`, label: `${'l'.repeat(296)}${T}`, read: true }] }, { secrets })
+  assert.ok(!ans.answer.includes(T.slice(0, 4)), `answer leaks nothing: …${ans.answer.slice(-20)}`)
+  assert.ok(!ans.based_on[0].label.includes(T.slice(0, 4)) && !ans.based_on[0].ref.includes(T.slice(0, 4)), 'nor the refs')
+  const code = normaliseError(400, { error: `${'e'.repeat(76)}${T}` }, null, { secrets })
+  assert.ok(!code.error.includes(T.slice(0, 4)), 'nor the error code')
+})
