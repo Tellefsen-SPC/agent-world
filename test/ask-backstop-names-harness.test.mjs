@@ -39,6 +39,9 @@ const events = [
   ev(R2, 'run_completed', 'research lab', { client: 'Fixture Freight' }, { outcome: 'success' }),
   // an inactive client seen only in events, used as an actor: not known, so withheld — the safe direction
   ev(R3, 'run_started', 'Fixture Former', { client: 'Fixture Former' }),
+  // trigger values written as actors: known only through TRIGGERS, the Worker's fixed list (neither is a system actor)
+  ev(R3, 'artifact_registered', 'chat', { client: 'Fixture Former' }, { title: 'ZZTEST artifact 3' }),
+  ev(R3, 'artifact_registered', 'claude_project', { client: 'Fixture Former' }, { title: 'ZZTEST artifact 4' }),
 ]
 
 test('known names come from the substrate only: an event-planted client or skill never unblocks a person; a company key, an Active client and a room pass as places', { timeout: 15000 }, async () => {
@@ -75,9 +78,12 @@ test('known names come from the substrate only: an event-planted client or skill
       ['a company key (WORLD_COMPANIES)', 'fixture-harbour has no runs yet.'],
       ['a pack room id', 'research-lab is on the first ring.'],
       ['a pack room name', 'The research lab holds two briefs.'],
+      // the Worker's trigger values as words: only TRIGGERS makes these known (review of 45ddada)
+      ['a trigger, chat', 'Chat runs are answered on the Worker.'],
+      ['a trigger, claude_project', 'claude_project runs open the Claude Project.'],
     ]) {
       const b = await ask(text)
-      assert.ok(!withheld(b), `${what}: "${text}" is a place, not a person`)
+      assert.ok(!withheld(b), `${what}: "${text}" names no person`)
       assert.equal(b.answer, text)
     }
 
