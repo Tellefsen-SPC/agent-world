@@ -137,7 +137,7 @@ test('U16: every other status in words — off (503, 404, this machine), the bud
   const expect = {
     provider_failed: 'The model provider failed',
     provider_timeout: 'The model did not answer in time',
-    provider_empty: 'The model gave no answer',
+    out_of_time: 'Compass ran out of time reading the ledger',
     substrate_unavailable: 'The Worker could not read the substrate',
     ledger_unavailable: 'The run ledger did not record the ask',
     budget_unavailable: "The Worker could not check today's budget",
@@ -151,11 +151,14 @@ test('U16: every other status in words — off (503, 404, this machine), the bud
   assert.equal(pa.viewOf({ status: 502, body: cases.provider_failed.body }).meta, 'run e5e5e5e5 · claude-sonnet-5', 'a failed ask names its own run')
   assert.equal(pa.viewOf({ status: 401, body: { error: 'unauthorized' } }).title, "The Worker refused this machine's token")
   assert.equal(pa.viewOf({ status: 504, body: { error: 'worker_timeout' } }).title, 'The Worker did not answer in time')
+  assert.equal(pa.viewOf({ status: 405, body: { error: 'method not allowed' } }).title, 'The Worker refused how it was asked')
+  assert.equal(pa.viewOf({ status: 415, body: {} }).title, 'The question was not sent as JSON')
   assert.equal(pa.viewOf({ status: 409, body: { error: 'ask_in_flight' } }).title, 'One question at a time')
   assert.equal(pa.viewOf({ status: 413, body: {} }).title, 'The question is too long')
   assert.equal(pa.viewOf({ status: 400, body: { error: 'context.run_id must be a uuid' } }).text, 'context.run_id must be a uuid')
   assert.equal(pa.viewOf({ status: 403, body: { error: 'The PA answers the Owner only' } }).title, 'The PA answers the Owner only')
-  assert.deepEqual([pa.viewOf({ status: 0 }).title, pa.viewOf({ status: 0 }).text], ['The side port did not answer', 'The question did not leave this machine. Is ./dev.sh running?'])
+  assert.equal(pa.viewOf({ status: 0, body: { error: 'sidecar_unreachable' } }).title, 'The side port did not answer')
+  assert.equal(pa.viewOf({ status: 0, body: { error: 'page_timeout' } }).title, 'No answer within 60 s')
   assert.equal(pa.viewOf({ status: 418, body: { error: 'teapot' } }).title, 'The ask failed (HTTP 418)')
   for (const status of [0, 200, 400, 401, 403, 404, 409, 413, 429, 500, 502, 503, 504]) {
     const v = pa.viewOf({ status, body: status === 200 ? cases.answer.body : { error: 'x' } })
@@ -208,4 +211,55 @@ test('U16: the panel\'s one network call is the sidecar\'s /ask — pa.mjs makes
     // a setting's name in a sentence ("set WORLD_ASK_BEARER …") is help text; a header, a token prefix, the Worker's host or an env read is not
     assert.ok(!/Authorization\s*['":]|['"`]Bearer\s|workers\.dev|process\.env|import\.meta\.env/.test(text), `overlay/${f} holds a bearer or names the Worker`)
   }
+})
+
+test('U16 (review 1): an English-only refusal says so in plain words and never says Annex III — from the question check and from the answer check', () => {
+  const q = pa.viewOf({ status: 200, body: cases.english_only_question.body })
+  assert.deepEqual([q.tone, q.title], ['refused', 'Not answered: the PA takes questions in English only for now'])
+  assert.equal(q.text, cases.english_only_question.body.answer, 'the Worker\'s own text')
+  assert.match(q.detail, /question check/)
+  const a = pa.viewOf({ status: 200, body: cases.english_only_answer.body })
+  assert.equal(a.title, 'Not answered: the PA takes questions in English only for now')
+  assert.match(a.detail, /checked in English only/)
+  for (const v of [q, a]) assert.ok(!/annex/i.test(`${v.title} ${v.detail}`), `no Annex III: ${v.title} · ${v.detail}`)
+  assert.match(pa.viewOf({ status: 200, body: cases.refusal_guard.body }).title, /Annex III/, 'an Annex III refusal still says so')
+  assert.equal(pa.viewOf({ status: 200, body: { ...cases.refusal_guard.body, reason: undefined } }).title, 'Not answered', 'a refusal with no reason the panel knows: plain, and no Annex III claimed')
+})
+
+test('U16 (review 2): every error code the Worker documents (compass-ask docs/ask.md @ 71fecb9) has words of its own — out_of_time included; none falls through to "The ask failed"', () => {
+  // copied from the contract's error table; when docs/ask.md adds a code, add it here
+  const documented = [
+    [400, 'question is required: send {"question": "…", "context": {…}}'],
+    [401, 'unauthorized'],
+    [405, 'method not allowed'],
+    [413, 'body exceeds 8192 bytes'],
+    [429, 'ask_budget_exceeded'],
+    [503, 'ask_not_configured'],
+    [503, 'EVENTS_BEARER_TOKEN is not configured on the Worker'],
+    [502, 'budget_unavailable'],
+    [502, 'ledger_unavailable'],
+    [502, 'substrate_unavailable'],
+    [502, 'provider_failed'],
+    [502, 'provider_timeout'],
+    [502, 'out_of_time'],
+  ]
+  for (const [status, error] of documented) {
+    const v = pa.viewOf({ status, body: { error } })
+    assert.ok(!/^The ask failed/.test(v.title), `${status} ${error} has its own title`)
+    assert.ok(v.text, `${status} ${error} says what it means`)
+  }
+  assert.equal(pa.viewOf({ status: 503, body: { error: 'EVENTS_BEARER_TOKEN is not configured on the Worker' } }).detail, 'EVENTS_BEARER_TOKEN is not configured on the Worker', 'a 503 with no detail shows its sentence')
+  const ot = pa.viewOf(cases.out_of_time)
+  assert.deepEqual([ot.title, ot.meta], ['Compass ran out of time reading the ledger', 'run dadadada'])
+  assert.match(ot.text, /nothing was spent.*Ask again/)
+  assert.ok(!('provider_empty' in pa.WORKER_502), 'provider_empty is a reason inside provider_failed, not a code')
+})
+
+test('U16 (review 8): no timeout says the question stayed on this machine — once sent, the ask may still be running on the Worker', () => {
+  for (const r of [{ status: 0, body: { error: 'page_timeout' } }, { status: 0, body: { error: 'sidecar_unreachable' } }, { status: 504, body: { error: 'worker_timeout' } }, { status: 0 }]) {
+    const v = pa.viewOf(r)
+    assert.ok(!/did not leave this machine|nothing was asked/i.test(`${v.title} ${v.text} ${v.detail}`), JSON.stringify(r))
+  }
+  assert.match(pa.viewOf({ status: 0, body: { error: 'page_timeout' } }).text, /may still be running on the Worker/)
+  assert.match(pa.viewOf({ status: 504, body: { error: 'worker_timeout' } }).text, /may still be running on the Worker/)
 })

@@ -137,19 +137,39 @@ export function metaLine(body) {
   return parts.join(' · ')
 }
 
-const WORKER_502 = Object.freeze({
+/**
+ * Every 502 the Worker documents (compass-ask docs/ask.md, re-checked 2026-10-05 at 71fecb9) and the side port's own two.
+ * provider_empty is a reason inside provider_failed's detail, not a code of its own, so it has no line here.
+ */
+export const WORKER_502 = Object.freeze({
   provider_failed: ['The model provider failed', 'Nothing was answered. The ask is recorded as a failed run.'],
-  provider_timeout: ['The model did not answer in time', 'The Worker waits 25 s for the model. The ask is recorded as a failed run.'],
-  provider_empty: ['The model gave no answer', 'It used its output budget without an answer. The ask is recorded as a failed run.'],
+  provider_timeout: ['The model did not answer in time', 'The Worker waits at most 25 s for the model, less when its reads were slow. The ask is recorded as a failed run.'],
+  out_of_time: ['Compass ran out of time reading the ledger', 'The reads took so long that there was no time left to ask the model, so nothing was spent. The ask is recorded as a failed run. Ask again.'],
   substrate_unavailable: ['The Worker could not read the substrate', 'There was nothing to answer from, so the model was not called. The ask is recorded as a failed run.'],
   ledger_unavailable: ['The run ledger did not record the ask', 'Every ask is a governed run, so the model was not called and nothing was spent. Try again.'],
   budget_unavailable: ["The Worker could not check today's budget", 'Nothing was spent and nothing was recorded. Try again.'],
-  worker_unreachable: ['The Worker could not be reached', 'This machine got no answer from the Compass Worker. Nothing was asked.'],
+  worker_unreachable: ['The Worker could not be reached', 'This machine got no answer from the Compass Worker.'],
   bad_answer: ['The Worker answered in a shape the panel does not know', 'Nothing is shown rather than a guess.'],
 })
 
+/** Where a refusal came from, in words: the question check, the model, or an answer check. */
+function refusedBy(b) {
+  if (b.reason === 'named_person') return "This world's own check found a name from the ledger in the answer. The ask ran on the Worker and is recorded there."
+  if (b.withheld) return b.reason === 'english_only' ? 'The answer check withheld it: answers are checked in English only.' : 'The answer check withheld what the model wrote.'
+  if (b.model) return 'The model declined it.'
+  return 'The question check refused it before any model was called; nothing was spent.'
+}
+
+/** A refusal's title, by its reason — plain words, and Annex III named only when it is Annex III. */
+const REFUSAL_TITLE = Object.freeze({
+  annex_iii: 'Not answered: the PA does not judge people (Annex III)',
+  english_only: 'Not answered: the PA takes questions in English only for now',
+  named_person: 'Withheld: it named a person',
+})
+
 /**
- * What the panel shows for a result { status, body } from askPa (status 0: the sidecar did not answer):
+ * What the panel shows for a result { status, body } from askPa (status 0: no answer from the side port — body.error
+ * says whether the page gave up waiting, page_timeout, or never reached it):
  * { tone: answer | refused | off | budget | error, title, text, detail, wait, basedOn, meta, notes }.
  */
 export function viewOf(result) {
@@ -158,8 +178,9 @@ export function viewOf(result) {
   const v = (tone, title, text, extra = {}) => ({ tone, title, text, detail: '', wait: '', basedOn: [], meta: '', notes: [], ...extra })
   const detail = typeof b.detail === 'string' ? b.detail : ''
   if (status === 200 && b.refused) {
-    const by = b.withheld ? 'The answer check withheld what the model wrote.' : b.model ? 'The model declined it.' : 'The question check refused it before any model was called; nothing was spent.'
-    return v('refused', 'Not answered: the PA does not judge people (Annex III)', String(b.answer || ''), { detail: by, meta: metaLine(b) })
+    // the backstop shows no text at all; a Worker refusal shows the Worker's own plain refusal
+    const text = b.reason === 'named_person' ? '' : String(b.answer || '')
+    return v('refused', REFUSAL_TITLE[b.reason] || 'Not answered', text, { detail: refusedBy(b), meta: metaLine(b) })
   }
   if (status === 200) {
     const { text } = splitBasedOn(b.answer)
@@ -168,20 +189,25 @@ export function viewOf(result) {
     if (b.ledger && b.ledger.run_completed === false) notes.push("The ledger missed this ask's end; it is still an answer.")
     return v('answer', 'Answer', text, { basedOn: basedOnRows(b.based_on), meta: metaLine(b), notes })
   }
-  if (status === 0) return v('off', 'The side port did not answer', 'The question did not leave this machine. Is ./dev.sh running?')
+  // Nit 8: a timeout never claims the question stayed here — once sent, the Worker may still be answering it.
+  const mayRun = 'The ask may still be running on the Worker; if it is, the Worker records it as its own run. Wait a minute before asking again.'
+  if (status === 0 && b.error === 'page_timeout') return v('error', 'No answer within 60 s', mayRun)
+  if (status === 0) return v('off', 'The side port did not answer', `Is ./dev.sh running? If the question reached it, ${mayRun.charAt(0).toLowerCase()}${mayRun.slice(1)}`)
   if (status === 429) {
     const wait = Number.isFinite(b.retry_after) ? `Try again in ${formatWait(b.retry_after)}: the budget resets at 00:00 UTC (04:00 Muscat).` : 'The budget resets at 00:00 UTC (04:00 Muscat).'
     return v('budget', "The PA's budget for today is spent", 'No model was called for this question, and nothing was recorded.', { detail, wait })
   }
   if (b.error === 'world_not_configured') return v('off', 'PA not switched on on this machine', detail || "The Worker's address or token is missing from .env.")
-  if (status === 503 || b.error === 'ask_not_configured') return v('off', 'PA not switched on', 'The Worker has the route, but no model to call yet.', { detail })
+  if (status === 503 || b.error === 'ask_not_configured') return v('off', 'PA not switched on', 'The Worker has the route, but cannot answer yet.', { detail: detail || (b.error && b.error !== 'ask_not_configured' ? String(b.error) : '') })
   if (status === 404) return v('off', 'PA not switched on', 'The Worker has no /ask route yet: U16W is not deployed.')
   if (status === 401) return v('error', "The Worker refused this machine's token", 'The PA token in .env does not match the Worker (RUNBOOK §6). Fix it, then restart ./dev.sh.')
-  if (status === 403) return v('off', String(b.error || 'Not allowed'), 'The PA answers the Owner only, from the page on this machine.')
+  if (status === 403) return v('off', String(b.error || 'Not allowed'), 'The PA answers the Owner only, from the world\'s own page on this machine.')
+  if (status === 405) return v('error', 'The Worker refused how it was asked', 'The side port asks with POST, so this should not happen. Report it.')
   if (status === 409) return v('error', 'One question at a time', detail || 'The last question is still being answered.')
   if (status === 413) return v('error', 'The question is too long', `At most ${MAX_QUESTION} characters, and the whole request at most 8 KB.`)
+  if (status === 415) return v('error', 'The question was not sent as JSON', 'Report it: the panel always sends JSON.')
   if (status === 400) return v('error', 'The question was not accepted', String(b.error || 'The request was malformed.'))
-  if (status === 504) return v('error', 'The Worker did not answer in time', detail || 'Nothing came back before the deadline.')
+  if (status === 504) return v('error', 'The Worker did not answer in time', detail || mayRun)
   const known = WORKER_502[b.error]
   if (known) return v('error', known[0], known[1], { detail, meta: b.run_id ? `run ${short(b.run_id)}${b.model ? ` · ${b.model}` : ''}` : '' })
   return v('error', `The ask failed (HTTP ${status})`, String(b.error || 'No reason was given.'), { detail })

@@ -81,7 +81,7 @@ test('U16W: spec/ask.v1.json — the sidecar cuts every answer and error the Wor
       errors++
     }
   }
-  assert.ok(answers >= 3 && errors >= 8, 'an answer, two refusals and the error statuses')
+  assert.ok(answers >= 5 && errors >= 9, 'an answer, four refusals (Annex III twice, English only twice) and the error statuses')
   // the budget's wait rides on the body as whole seconds
   assert.equal(normaliseError(429, cases.budget.body, retryAfterOf(cases.budget.retry_after)).retry_after, 15120)
   // a Worker body with a key the contract has not got: the raw body fails the schema; the cut drops the key
@@ -95,6 +95,54 @@ test('U16W: spec/ask.v1.json — the sidecar cuts every answer and error the Wor
   assert.ok(validate(schema, noRun).some((e) => /missing required "run_id"/.test(e)))
   assert.ok(validate(schema, { ...cases.answer.body, provider: 'someone-else' }).some((e) => /provider/.test(e)))
   assert.ok(!/actor/i.test(JSON.stringify(schema)), 'the schema names no person-shaped field')
+})
+
+test('U16W (review 1): the cut checks values, not only keys — a reason, a provider, a run id or a model the schema does not allow never reaches the panel', async () => {
+  const { normaliseAnswer, normaliseError, SCHEMA } = await import(path.join(root, 'server/harnesses/compass/ask.mjs'))
+  const schema = read('spec/ask.v1.json')
+  assert.deepEqual(SCHEMA, schema, 'ask.mjs reads the schema file itself')
+  assert.deepEqual(schema.properties.reason.enum, ['annex_iii', 'english_only', 'named_person'])
+  const cases = read('test/fixtures/ask.synthetic.json')
+  const a = cases.answer.body
+  // optional: dropped — a refusal whose reason the contract does not name stays a refusal, with no reason
+  const odd = normaliseAnswer({ ...cases.refusal_guard.body, reason: 'because' })
+  assert.equal(odd.refused, true)
+  assert.ok(!('reason' in odd), 'an unknown reason is dropped, not passed on')
+  assert.deepEqual(validate(schema, odd), [])
+  // nullable: nulled
+  for (const [k, bad] of [['provider', 'someone-else'], ['provider', 'Anthropic'], ['run_id', 'not-a-uuid'], ['run_id', 'a1a1a1a1'], ['model', 'claude sonnet <b>5</b>'], ['tokens_in', -1], ['tokens_out', 1.5], ['usage', { input_tokens: -3, output_tokens: 1 }], ['ledger', { run_started: 'yes', row: 'inserted' }]]) {
+    const cut = normaliseAnswer({ ...a, [k]: bad })
+    assert.equal(cut[k], null, `${k} = ${JSON.stringify(bad)} is nulled`)
+    assert.deepEqual(validate(schema, cut), [], `${k}: the cut fits the schema`)
+  }
+  assert.equal(normaliseAnswer({ ...a, ledger: { run_started: true, row: 'Inserted!' } }).ledger, null, 'a row outside its pattern')
+  // arrays: the items that do not fit are dropped
+  const based = normaliseAnswer({ ...a, based_on: [...a.based_on, { ref: 'x', label: 'y', read: 'yes' }, { ref: 'x', label: 'y', read: true, rows: -1 }] })
+  assert.equal(based.based_on.length, a.based_on.length)
+  // required and not nullable: the whole answer is refused
+  assert.equal(normaliseAnswer({ ...a, answer: '' }), null)
+  assert.equal(normaliseAnswer({ ...a, truncated: 'no' }).truncated, false, 'truncated is true only when it is true')
+  // errors: an optional value outside its pattern is dropped; a code with no word in it falls back to http_<status>
+  const e = normaliseError(502, { ...cases.provider_failed.body, provider: 'nobody', run_id: 'nope', model: 'a b' }, null)
+  assert.deepEqual(Object.keys(e).sort(), ['detail', 'error'])
+  assert.deepEqual(normaliseError(502, { error: '   ' }, null), { error: 'http_502' })
+  assert.deepEqual(normaliseError(429, cases.budget.body, -5).retry_after, undefined, 'a negative wait is not a wait')
+  for (const c of [e, normaliseError(429, cases.budget.body, 10)]) assert.deepEqual(validate(schema.$defs.error, c), [])
+})
+
+test('U16W (review 7): neither bearer\'s value is passed on — cut from the answer, the refs, the detail and the error, wherever the Worker put it', async () => {
+  const { normaliseAnswer, normaliseError, secretsOf } = await import(path.join(root, 'server/harnesses/compass/ask.mjs'))
+  const cases = read('test/fixtures/ask.synthetic.json')
+  const T = 'zztest-bearer-0123456789abcdef'
+  const secrets = secretsOf(T, 'zztest-events-bearer-xyz', '', 'short')
+  assert.deepEqual(secrets, [T, 'zztest-events-bearer-xyz'], 'empty and short values are not secrets to cut')
+  const leaky = { ...cases.answer.body, answer: `the token is ${T}; again ${T}`, based_on: [{ ref: `x:${T}`, label: `Bearer ${T}`, read: true }], ledger: { run_started: true, row: 'inserted' } }
+  const cut = normaliseAnswer(leaky, { secrets })
+  assert.ok(!JSON.stringify(cut).includes(T))
+  assert.equal(cut.answer, 'the token is [redacted]; again [redacted]')
+  const err = normaliseError(502, { error: 'provider_failed', detail: `upstream said: Authorization: Bearer zztest-events-bearer-xyz`, model: 'claude-sonnet-5' }, null, { secrets })
+  assert.equal(err.detail, 'upstream said: Authorization: Bearer [redacted]')
+  assert.ok(!JSON.stringify(normaliseError(400, { error: `bad ${T}` }, null, { secrets })).includes(T))
 })
 
 test('U34: spec/pack.v1.json validates both shipped packs and carries figure ∈ {character, marker}', () => {

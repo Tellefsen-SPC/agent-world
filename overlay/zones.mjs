@@ -151,11 +151,14 @@ export async function loadSpendToday(includeTest = false) {
 /**
  * U16 — the PA panel's one network call: the question to the sidecar's POST /ask, never to the Worker. The sidecar
  * adds the bearer (docs/adr/0008); nothing on this side holds one. Returns { status, body } for overlay/pa.mjs viewOf —
- * status 0 when the sidecar did not answer. Waits longer than the sidecar's own 40 s, so its 504 arrives first.
+ * status 0 when the sidecar did not answer: body.error page_timeout when this page gave up waiting (the ask may still
+ * be running on the Worker), sidecar_unreachable otherwise. Waits 60 s, longer than the sidecar's own deadline (50 s,
+ * at most 55 s), so the sidecar's 504 arrives first.
  */
+export const ASK_PAGE_TIMEOUT_MS = 60_000
 export async function askPa(body) {
   try {
-    const res = await fetch(`${SIDECAR}/ask`, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(60_000) })
+    const res = await fetch(`${SIDECAR}/ask`, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(ASK_PAGE_TIMEOUT_MS) })
     let json = null
     try {
       json = await res.json()
@@ -164,7 +167,7 @@ export async function askPa(body) {
     }
     return { status: res.status, body: json && typeof json === 'object' ? json : {} }
   } catch (err) {
-    return { status: 0, body: { error: String(err?.message || err) } }
+    return { status: 0, body: { error: err?.name === 'TimeoutError' || err?.name === 'AbortError' ? 'page_timeout' : 'sidecar_unreachable' } }
   }
 }
 /** The rooms the sidecar declares (the pack's, with ring and spoke) — the plots the room panels hang off. */

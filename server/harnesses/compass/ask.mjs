@@ -15,6 +15,9 @@
  *    the Worker refuses person questions itself, and the panel never invites them);
  *  - ask twice at once: one question in flight per process — each one spends tokens.
  */
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { withTimeout } from './health.mjs'
 
 /** The Worker's bounds (src/lib/ask-endpoint.ts), checked here first so a bad body never leaves the machine. */
@@ -66,84 +69,138 @@ export function parseQuestion(body) {
 }
 
 // ─── The answer, cut to spec/ask.v1.json ─────────────────────────────────────────────────────
+//
+// Keys AND values: every value is checked against the schema file itself (its types, enums, patterns and minimums), so
+// a reason, a provider or a run id the contract does not name never reaches the panel. A value that does not fit is
+// dropped when the schema has it optional, set to null when the schema allows null, and otherwise the whole answer is
+// refused (bad_answer). Every string the Worker sent has the bearer's value cut out first (nit 7).
+
+const here = path.dirname(fileURLToPath(import.meta.url))
+export const SCHEMA = JSON.parse(fs.readFileSync(path.join(here, '..', '..', '..', 'spec', 'ask.v1.json'), 'utf8'))
+const ERROR_SCHEMA = SCHEMA.$defs.error
+
+const typeOf = (v) => (v === null ? 'null' : Array.isArray(v) ? 'array' : Number.isInteger(v) ? 'integer' : typeof v)
+const isType = (v, t) => (t === 'number' ? typeof v === 'number' && Number.isFinite(v) : t === 'integer' ? Number.isInteger(v) : typeOf(v) === t)
+/**
+ * Whether `value` fits `schema` — the subset spec/ask.v1.json uses (type, enum, pattern, minimum, maximum, required,
+ * properties, additionalProperties false, items). Its own code on purpose: the contract test checks this module's
+ * output with test/lib/validate.mjs, so the two never share a mistake.
+ */
+export function fits(schema, value) {
+  if (!schema || typeof schema !== 'object') return true
+  if (schema.type) {
+    const types = Array.isArray(schema.type) ? schema.type : [schema.type]
+    if (!types.some((t) => isType(value, t))) return false
+  }
+  if (schema.enum && !schema.enum.includes(value)) return false
+  if (typeof value === 'string' && schema.pattern && !new RegExp(schema.pattern).test(value)) return false
+  if (typeof value === 'number') {
+    if (schema.minimum !== undefined && value < schema.minimum) return false
+    if (schema.maximum !== undefined && value > schema.maximum) return false
+  }
+  if (Array.isArray(value) && schema.items && !value.every((v) => fits(schema.items, v))) return false
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    for (const k of schema.required || []) if (!(k in value)) return false
+    for (const [k, v] of Object.entries(value)) {
+      const sub = schema.properties?.[k]
+      if (!sub) {
+        if (schema.additionalProperties === false) return false
+        continue
+      }
+      if (!fits(sub, v)) return false
+    }
+  }
+  return true
+}
+
+/** The bearer values to cut out of anything passed through: long enough to be a token, so a short one cannot mangle text. */
+export const secretsOf = (...tokens) => [...new Set(tokens.map((t) => String(t || '').trim()).filter((t) => t.length >= 8))]
+/** Every string in `value`, with each secret's value replaced. */
+export function scrub(value, secrets = []) {
+  if (!secrets.length) return value
+  if (typeof value === 'string') return secrets.reduce((s, t) => s.split(t).join('[redacted]'), value)
+  if (Array.isArray(value)) return value.map((v) => scrub(v, secrets))
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, scrub(v, secrets)]))
+  return value
+}
+
+const nullable = (schema) => (Array.isArray(schema?.type) ? schema.type : [schema?.type]).includes('null')
+/**
+ * `candidate` cut to `schema` by value: each key the schema does not name is gone; each value that does not fit is
+ * dropped (optional), nulled (nullable), or — a required value that cannot be null — makes the whole thing null.
+ * Arrays drop the items that do not fit. The result fits `schema`, or is null.
+ */
+export function cutTo(schema, candidate) {
+  const out = {}
+  for (const [k, v] of Object.entries(candidate)) {
+    const sub = schema.properties?.[k]
+    if (!sub || v === undefined) continue
+    let value = v
+    if (Array.isArray(value) && sub.items) value = value.filter((x) => fits(sub.items, x))
+    if (fits(sub, value)) out[k] = value
+    else if ((schema.required || []).includes(k)) {
+      if (!nullable(sub)) return null
+      out[k] = null
+    }
+  }
+  return fits(schema, out) ? out : null
+}
 
 const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null)
-const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : null)
-const count = (v) => (Number.isInteger(v) && v >= 0 ? v : null)
-const bool = (v) => v === true
+const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : v === null ? null : undefined)
 
 /** One "Based on" entry: what the Worker read (or named and did not read), as a reference and a label. */
 function basedOnEntry(v) {
-  const b = obj(v)
-  const ref = str(b?.ref, 300)
-  const label = str(b?.label, 300)
-  if (!ref || !label) return null
-  const out = { ref, label, read: b.read === true }
-  if (count(b.rows) !== null) out.rows = b.rows
-  if (typeof b.version === 'string' || b.version === null) out.version = b.version === null ? null : b.version.slice(0, 40)
-  if (typeof b.note === 'string') out.note = b.note.slice(0, 300)
-  return out
+  const b = obj(v) || {}
+  return { ref: str(b.ref, 300), label: str(b.label, 300), read: b.read, rows: b.rows, version: str(b.version, 40), note: str(b.note, 300) }
 }
+const withoutUndefined = (o) => (o ? Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) : o)
 
-function usageOf(v) {
-  const u = obj(v)
-  if (!u || count(u.input_tokens) === null || count(u.output_tokens) === null) return null
-  const out = { input_tokens: u.input_tokens, output_tokens: u.output_tokens }
-  for (const k of ['cache_creation_input_tokens', 'cache_read_input_tokens']) if (count(u[k]) !== null) out[k] = u[k]
-  return out
-}
-
-function ledgerOf(v) {
-  const l = obj(v)
-  if (!l) return null
-  const out = { run_started: bool(l.run_started) }
-  if (typeof l.run_completed === 'boolean') out.run_completed = l.run_completed
-  if (typeof l.run_failed === 'boolean') out.run_failed = l.run_failed
-  out.row = str(l.row, 40)
-  return out
-}
-
-/** A 200's body cut to the contract, or null when it is not an answer (no answer text) — then the sidecar says so. */
-export function normaliseAnswer(body) {
+/**
+ * A 200's body cut to the contract, or null when it is not an answer — then the sidecar says so (bad_answer). Keys the
+ * schema does not name stay on the Worker; values it does not allow are dropped, nulled, or refuse the answer.
+ */
+export function normaliseAnswer(body, { secrets = [] } = {}) {
   const b = obj(body)
-  const answer = str(b?.answer, 20_000)
-  if (!answer || !answer.trim()) return null
-  const out = {
-    answer,
-    based_on: (Array.isArray(b.based_on) ? b.based_on : []).map(basedOnEntry).filter(Boolean).slice(0, 40),
-    run_id: str(b.run_id, 64),
-    model: str(b.model, 120),
-    provider: str(b.provider, 40),
-    usage: usageOf(b.usage),
-    tokens_in: count(b.tokens_in),
-    tokens_out: count(b.tokens_out),
-    truncated: bool(b.truncated),
-    ledger: ledgerOf(b.ledger),
-  }
-  if (b.refused === true) {
-    out.refused = true
-    out.reason = str(b.reason, 40) || 'annex_iii'
-    if (b.withheld === true) out.withheld = true
-  }
-  return out
+  if (!b || typeof b.answer !== 'string' || !b.answer.trim()) return null
+  const usage = obj(b.usage)
+  const ledger = obj(b.ledger)
+  const candidate = scrub(
+    {
+      answer: b.answer.slice(0, 20_000),
+      based_on: (Array.isArray(b.based_on) ? b.based_on : []).slice(0, 40).map((e) => withoutUndefined(basedOnEntry(e))),
+      run_id: str(b.run_id, 64),
+      model: str(b.model, 120),
+      provider: str(b.provider, 40),
+      usage: usage ? withoutUndefined({ input_tokens: usage.input_tokens, output_tokens: usage.output_tokens, cache_creation_input_tokens: usage.cache_creation_input_tokens, cache_read_input_tokens: usage.cache_read_input_tokens }) : b.usage,
+      tokens_in: b.tokens_in,
+      tokens_out: b.tokens_out,
+      truncated: b.truncated === true,
+      ledger: ledger ? withoutUndefined({ run_started: ledger.run_started, run_completed: ledger.run_completed, run_failed: ledger.run_failed, row: str(ledger.row, 40) }) : b.ledger,
+      ...(b.refused === true ? { refused: true, reason: str(b.reason, 40), ...(b.withheld === true ? { withheld: true } : {}) } : {}),
+    },
+    secrets,
+  )
+  return cutTo(SCHEMA, candidate)
 }
 
 /** An error's body cut to the contract: the Worker's code and sentence, the PA's run id when it has one, the wait on a 429. */
-export function normaliseError(status, body, retryAfter = null) {
-  const b = obj(body)
-  const code = str(b?.error, 80)
-  const out = { error: code && code.trim() ? code : `http_${status}` }
-  const detail = str(b?.detail, 1000)
-  if (detail) out.detail = detail
-  for (const k of ['run_id', 'provider', 'model']) {
-    const v = str(b?.[k], k === 'model' ? 120 : 64)
-    if (v) out[k] = v
-  }
-  if (status === 429) {
-    if (retryAfter !== null) out.retry_after = retryAfter
-    for (const k of ['asks_today', 'tokens_today', 'limit', 'token_limit']) if (count(b?.[k]) !== null) out[k] = b[k]
-  }
-  return out
+export function normaliseError(status, body, retryAfter = null, { secrets = [] } = {}) {
+  const b = obj(body) || {}
+  const candidate = scrub(
+    {
+      error: str(b.error, 80),
+      detail: str(b.detail, 1000),
+      run_id: str(b.run_id, 64),
+      provider: str(b.provider, 40),
+      model: str(b.model, 120),
+      ...(status === 429 ? { retry_after: retryAfter ?? undefined, asks_today: b.asks_today, tokens_today: b.tokens_today, limit: b.limit, token_limit: b.token_limit } : {}),
+    },
+    secrets,
+  )
+  for (const k of Object.keys(candidate)) if (candidate[k] === null) delete candidate[k] // an error carries no nulls
+  const cut = cutTo(ERROR_SCHEMA, candidate)
+  return cut || cutTo(ERROR_SCHEMA, { ...candidate, error: `http_${status}` }) || { error: `http_${status}` }
 }
 
 /** Retry-After as whole seconds: a number of seconds, or an HTTP date from now; null when it is neither. */
@@ -163,8 +220,10 @@ export function retryAfterOf(value, now = Date.now()) {
  * bad_answer (a 200 that is not an answer).
  */
 export function createAsk(cfg, { fetchImpl: rawFetch = globalThis.fetch, log = () => {}, now = Date.now } = {}) {
-  const fetchImpl = withTimeout(rawFetch, cfg.askTimeoutMs ?? 40_000)
-  const after = `${Math.round((cfg.askTimeoutMs ?? 40_000) / 1000)} s`
+  const fetchImpl = withTimeout(rawFetch, cfg.askTimeoutMs ?? 50_000)
+  const after = `${Math.round((cfg.askTimeoutMs ?? 50_000) / 1000)} s`
+  /** Nit 7: whatever the Worker sends back, neither bearer's value is passed on. */
+  const secrets = secretsOf(cfg.askBearerToken, cfg.eventsBearerToken)
   let inFlight = false
 
   async function ask(body) {
@@ -207,12 +266,12 @@ export function createAsk(cfg, { fetchImpl: rawFetch = globalThis.fetch, log = (
         payload = null // an error page that is not JSON: the status speaks for it
       }
       if (res.status === 200) {
-        const answer = normaliseAnswer(payload)
+        const answer = normaliseAnswer(payload, { secrets })
         return answer ? done(200, answer) : done(502, { error: 'bad_answer', detail: 'The Worker answered 200 without an answer in the shape spec/ask.v1.json names.' })
       }
       const status = Number.isInteger(res.status) && res.status >= 400 && res.status <= 599 ? res.status : 502
       const retryAfter = status === 429 ? retryAfterOf(res.headers?.get?.('retry-after'), now()) : null
-      return done(status, normaliseError(status, payload, retryAfter), retryAfter !== null ? { 'Retry-After': String(retryAfter) } : {})
+      return done(status, normaliseError(status, payload, retryAfter, { secrets }), retryAfter !== null ? { 'Retry-After': String(retryAfter) } : {})
     } finally {
       inFlight = false
     }

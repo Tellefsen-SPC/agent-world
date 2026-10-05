@@ -87,7 +87,7 @@ test('U16W: Retry-After reads as whole seconds, from a number or an HTTP date', 
 })
 
 test('U16W: the forwarder POSTs {question, context} to the Worker\'s /ask with the bearer, and passes the answer back cut to spec/ask.v1.json', async () => {
-  const worker = await standIn(() => ({ status: 200, body: { ...cases.answer.body, actor: 'someone', debug: { prompt: 'never forwarded' } } }))
+  const worker = await standIn(() => ({ status: 200, body: { ...cases.answer.body, actor: 'someone', debug: { prompt: 'never forwarded' } } })) // keys the contract does not name
   try {
     const out = await createAsk(cfgFor(worker.url)).ask({ question: QUESTION, context: { run_id: ALPHA, zone: 'ZZTEST Client' } })
     assert.equal(out.status, 200)
@@ -180,6 +180,27 @@ test('U16W: the sidecar\'s own answers — a bad body is never sent, nothing con
   }
   const dead = createAsk(loadConfig({ EVENTS_URL: 'http://127.0.0.1:9/events', EVENTS_BEARER_TOKEN: 'b' }), { fetchImpl: async () => { throw new TypeError('fetch failed') } })
   assert.deepEqual(await dead.ask({ question: 'q' }).then((r) => [r.status, r.body.error]), [502, 'worker_unreachable'])
+})
+
+test('U16W (review 7): a Worker that echoes the bearer back — in an answer or an error — never gets it as far as the page', async () => {
+  let echo = 'answer'
+  const worker = await standIn((seen) => {
+    const bearer = String(seen.authorization || '').replace(/^Bearer /, '')
+    return echo === 'answer'
+      ? { status: 200, body: { ...cases.answer.body, answer: `ok — the request carried ${bearer}` } }
+      : { status: 502, body: { error: 'provider_failed', detail: `the vendor quoted: Bearer ${bearer}` } }
+  })
+  try {
+    const ask = createAsk(cfgFor(worker.url))
+    const a = await ask.ask({ question: 'q' })
+    assert.equal(a.body.answer, 'ok — the request carried [redacted]')
+    echo = 'error'
+    const e = await ask.ask({ question: 'q' })
+    assert.equal(e.body.detail, 'the vendor quoted: Bearer [redacted]')
+    for (const r of [a, e]) assert.ok(!JSON.stringify(r).includes('zztest-events-bearer'), 'no bearer in what the sidecar passes on')
+  } finally {
+    await worker.close()
+  }
 })
 
 /** The sidecar in front of a forwarder that points at a stand-in Worker. */
