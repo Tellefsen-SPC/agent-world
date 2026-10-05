@@ -11,6 +11,14 @@ const num = (v, d) => {
   return Number.isFinite(n) && n > 0 ? n : d
 }
 
+/** U16: the side port's wait for the PA — the default, and the most any setting may give it (below the page's 60 s). */
+export const ASK_TIMEOUT_MS = 50_000
+export const MAX_ASK_TIMEOUT_MS = 55_000
+const portOf = (v, d) => {
+  const n = Number(String(v ?? '').trim())
+  return Number.isInteger(n) && n >= 1 && n <= 65_535 ? n : d
+}
+
 export function loadConfig(env = process.env) {
   const eventsUrl = (env.EVENTS_URL || '').replace(/\/+$/, '')
   return {
@@ -37,12 +45,18 @@ export function loadConfig(env = process.env) {
      * sidecar's POST /ask uses it (compass/ask.mjs): the browser never holds the bearer (docs/adr/0008). Derived only
      * from an EVENTS_URL that ends in /events, like the stream. The Worker takes ASK_BEARER when it has one, else the
      * events bearer; WORLD_ASK_BEARER is this machine's copy of the first, and the events bearer stands in without it.
-     * The deadline sits above the Worker's own 25 s on the model call, so the Worker's 502 provider_timeout arrives
-     * before this side gives up.
+     * The deadline: 50 s by default — above the Worker's own 28 s budget after an ask starts, so its 502s arrive first —
+     * and at most 55 s, so it always ends before the page's own 60 s wait (overlay/zones.mjs ASK_PAGE_TIMEOUT_MS) and the
+     * page hears the side port's 504 rather than giving up blind. A value that is not a positive number is the default.
      */
     askUrl: /\/events$/.test(eventsUrl) ? eventsUrl.replace(/\/events$/, '/ask') : '',
     askBearerToken: String(env.WORLD_ASK_BEARER || '').trim() || env.EVENTS_BEARER_TOKEN || '',
-    askTimeoutMs: num(env.WORLD_ASK_TIMEOUT_MS, 40_000),
+    askTimeoutMs: Math.min(num(env.WORLD_ASK_TIMEOUT_MS, ASK_TIMEOUT_MS), MAX_ASK_TIMEOUT_MS),
+    /**
+     * The world's own page port (Vite and `npm start` listen on PORT, default 5274). The side port answers the PA only
+     * for a page from this port on a loopback host — any other local page is refused (review nit 6, 2026-10-05).
+     */
+    pagePort: portOf(env.PORT, 5274),
     spendCacheMs: 60_000,
     spendWindowDays: 30,
     /** The overlay sidecar's loopback port (overlay-api.mjs); 0 disables it (home planet only). */

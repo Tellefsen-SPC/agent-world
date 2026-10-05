@@ -9,8 +9,9 @@ import path from 'node:path'
 
 const root = path.resolve(new URL('..', import.meta.url).pathname)
 const { createAsk, parseQuestion, retryAfterOf, MAX_QUESTION_CHARS } = await import(path.join(root, 'server/harnesses/compass/ask.mjs'))
-const { loadConfig } = await import(path.join(root, 'server/harnesses/compass/config.mjs'))
-const { createOverlayApi, startOverlayApi, mayAsk } = await import(path.join(root, 'server/harnesses/compass/overlay-api.mjs'))
+const cfgModule = await import(path.join(root, 'server/harnesses/compass/config.mjs'))
+const { loadConfig } = cfgModule
+const { createOverlayApi, startOverlayApi, mayAsk, isPageOrigin } = await import(path.join(root, 'server/harnesses/compass/overlay-api.mjs'))
 const { makeViewer, PRESETS } = await import(path.join(root, 'server/harnesses/compass/viewer.mjs'))
 const { validate } = await import('./lib/validate.mjs')
 const schema = JSON.parse(fs.readFileSync(path.join(root, 'spec/ask.v1.json'), 'utf8'))
@@ -48,8 +49,8 @@ test('U16W: config derives the /ask URL from EVENTS_URL like the reads, prefers 
   assert.equal(cfg.askUrl, 'https://w.example/ask')
   assert.equal(cfg.askBearerToken, 'ev', 'the events bearer stands in without WORLD_ASK_BEARER')
   assert.equal(loadConfig({ EVENTS_URL: 'https://w.example/events', EVENTS_BEARER_TOKEN: 'ev', WORLD_ASK_BEARER: ' ask ' }).askBearerToken, 'ask')
-  assert.ok(cfg.askTimeoutMs > 25_000, 'the Worker\'s provider_timeout (25 s) arrives before this side gives up')
-  assert.equal(cfg.askTimeoutMs, 40_000)
+  assert.ok(cfg.askTimeoutMs > 28_000, 'the Worker\'s own 28 s after the start runs out before this side gives up')
+  assert.equal(cfg.askTimeoutMs, 50_000)
   assert.equal(loadConfig({ EVENTS_URL: 'https://w.example/hooks', EVENTS_BEARER_TOKEN: 'ev' }).askUrl, '', 'no /events tail, no /ask URL')
   assert.equal(loadConfig({}).askUrl, '')
 })
@@ -204,10 +205,10 @@ test('U16W (review 7): a Worker that echoes the bearer back — in an answer or 
 })
 
 /** The sidecar in front of a forwarder that points at a stand-in Worker. */
-async function sidecarWith(worker, viewerFor, logs) {
+async function sidecarWith(worker, viewerFor, logs, { pagePort } = {}) {
   const ask = createAsk(cfgFor(worker.url), { log: (line) => logs?.push(String(line)) })
   const world = { planets: [{ key: 'zz', home: true }], towns: [], campus: { name: 'ZZTEST HQ' } }
-  const api = await startOverlayApi(createOverlayApi({ getWorld: async () => world, descriptor: async () => world, ask, viewerFor, log: (...a) => logs?.push(a.join(' ')) }), { port: 0 })
+  const api = await startOverlayApi(createOverlayApi({ getWorld: async () => world, descriptor: async () => world, ask, viewerFor, ...(pagePort ? { pagePort } : {}), log: (...a) => logs?.push(a.join(' ')) }), { port: 0 })
   return { api, base: `http://127.0.0.1:${api.port}` }
 }
 const post = (base, body, headers = {}) =>
@@ -308,4 +309,88 @@ test('U16W: only the Owner preset holds `ask`; mayAsk reads the capability, neve
   assert.equal(mayAsk({ capabilities: ['view', 'ask'] }), true)
   assert.equal(mayAsk(null), false)
   for (const f of ['server/harnesses/compass/ask.mjs', 'spec/ask.v1.json']) assert.ok(!/\bactor\b/i.test(fs.readFileSync(path.join(root, f), 'utf8')), `${f} names no person-shaped field`)
+})
+
+test('U16W (review 8): the side port waits 50 s by default and never more than 55 s — under the page\'s 60 s, so the page hears its 504', () => {
+  const { ASK_TIMEOUT_MS, MAX_ASK_TIMEOUT_MS } = cfgModule
+  assert.deepEqual([ASK_TIMEOUT_MS, MAX_ASK_TIMEOUT_MS], [50_000, 55_000])
+  assert.equal(loadConfig({ WORLD_ASK_TIMEOUT_MS: '20000' }).askTimeoutMs, 20_000)
+  for (const big of ['55001', '60000', '600000', '1e9']) assert.equal(loadConfig({ WORLD_ASK_TIMEOUT_MS: big }).askTimeoutMs, 55_000, big)
+  for (const bad of ['', 'abc', '-5', '0']) assert.equal(loadConfig({ WORLD_ASK_TIMEOUT_MS: bad }).askTimeoutMs, 50_000, `"${bad}" is the default`)
+  const page = Number(fs.readFileSync(path.join(root, 'overlay/zones.mjs'), 'utf8').match(/ASK_PAGE_TIMEOUT_MS = ([\d_]+)/)[1].replace(/_/g, ''))
+  assert.equal(page, 60_000)
+  assert.ok(MAX_ASK_TIMEOUT_MS < page, 'the cap stays below the page\'s own wait')
+})
+
+test('U16W (review 6): the PA answers the world\'s own page only — a loopback host AND the page\'s port; any other local page is refused, preflight included', async () => {
+  assert.equal(isPageOrigin('http://127.0.0.1:5274', 5274), true)
+  assert.equal(isPageOrigin('http://localhost:5274', 5274), true)
+  assert.equal(isPageOrigin('http://[::1]:5274', 5274), true)
+  for (const o of ['http://127.0.0.1:5275', 'http://localhost:3000', 'https://127.0.0.1:5274', 'http://127.0.0.2:5274', 'http://example.com:5274', 'http://127.0.0.1', 'null', '', undefined]) {
+    assert.equal(isPageOrigin(o, 5274), false, String(o))
+  }
+  const worker = await standIn()
+  try {
+    // one sidecar at a time: startOverlayApi closes the one before it (the Vite re-import guard)
+    const s = await sidecarWith(worker, () => makeViewer({ preset: 'owner' }))
+    try {
+      const other = await post(s.base, { question: QUESTION }, { Origin: 'http://127.0.0.1:5999' })
+      assert.equal(other.status, 403)
+      assert.match((await other.json()).error, /the world's own page only \(http:\/\/127\.0\.0\.1:5274\)/)
+      const pre = await fetch(`${s.base}/ask`, { method: 'OPTIONS', headers: { Origin: 'http://localhost:3000', 'Access-Control-Request-Method': 'POST' } })
+      assert.equal(pre.status, 403, 'another local page gets no preflight for /ask')
+      assert.equal((await fetch(`${s.base}/ask`, { method: 'OPTIONS', headers: { Origin: 'http://localhost:5274', 'Access-Control-Request-Method': 'POST' } })).status, 204)
+      assert.equal((await fetch(`${s.base}/world`, { method: 'OPTIONS', headers: { Origin: 'http://localhost:3000' } })).status, 204, 'the other routes keep their rule')
+    } finally {
+      await s.api.close()
+    }
+    const moved = await sidecarWith(worker, () => makeViewer({ preset: 'owner' }), null, { pagePort: 5294 })
+    try {
+      assert.equal((await post(moved.base, { question: QUESTION }, { Origin: 'http://127.0.0.1:5274' })).status, 403, 'PORT moves the page, and the rule with it')
+      assert.equal((await post(moved.base, { question: QUESTION }, { Origin: 'http://127.0.0.1:5294' })).status, 200)
+    } finally {
+      await moved.api.close()
+    }
+    assert.equal(worker.seen.length, 1, 'only the world\'s own page reached the Worker')
+  } finally {
+    await worker.close()
+  }
+  assert.equal(loadConfig({ PORT: '5294' }).pagePort, 5294)
+  for (const bad of ['', 'x', '0', '70000']) assert.equal(loadConfig({ PORT: bad }).pagePort, 5274, `"${bad}"`)
+})
+
+test('U16W (review 9): a body over 8 KB gets its 413 before the connection closes — sent chunked with no length, all at once, or still being sent', async () => {
+  const worker = await standIn()
+  const s = await sidecarWith(worker, () => makeViewer({ preset: 'owner' }))
+  const port = s.api.port
+  /** POST /ask chunked: `chunks` of 1 KB, then end — or keep writing slowly and never end. */
+  const chunked = (chunks, { endless = false } = {}) =>
+    new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, path: '/ask', method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin, 'Transfer-Encoding': 'chunked' } }, (res) => {
+        let text = ''
+        res.on('data', (c) => (text += c))
+        res.on('end', () => resolve({ status: res.statusCode, connection: res.headers.connection, body: JSON.parse(text || '{}'), closed: new Promise((r) => (req.socket.destroyed ? r() : req.socket.once('close', r))) }))
+      })
+      req.on('error', (err) => resolve({ error: err.code || err.message }))
+      req.write('{"question":"')
+      for (let i = 0; i < chunks; i++) req.write('x'.repeat(1024))
+      if (!endless) return req.end('"}')
+      const timer = setInterval(() => (req.destroyed ? clearInterval(timer) : req.write('x'.repeat(256))), 50)
+      timer.unref()
+    })
+  try {
+    const ended = await chunked(10)
+    assert.deepEqual([ended.error, ended.status, ended.body.error, ended.connection], [undefined, 413, 'body exceeds 8192 bytes', 'close'])
+    const flowing = await chunked(9, { endless: true })
+    assert.deepEqual([flowing.error, flowing.status], [undefined, 413], 'the answer arrives while the body is still coming')
+    const t0 = Date.now()
+    await flowing.closed
+    assert.ok(Date.now() - t0 < 3000, 'and the connection is closed after it')
+    const sized = await post(s.base, `{"question":"${'y'.repeat(9000)}"}`)
+    assert.equal(sized.status, 413, 'with a Content-Length too')
+    assert.equal(worker.seen.length, 0, 'none of them reached the Worker')
+  } finally {
+    await s.api.close()
+    await worker.close()
+  }
 })

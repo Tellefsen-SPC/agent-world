@@ -15,12 +15,15 @@ holds names and numbers only (`overlay/zones.mjs`: "No token ever reaches this f
 - The panel posts `{question, context}` to the sidecar's `POST /ask` (`compass/overlay-api.mjs`), on loopback, never
   to the Worker.
 - The sidecar decides who may ask before anything else happens. It needs the `ask` capability (`viewer.mjs`: the
-  Owner preset, the only one that has it), a local `Origin` (the same rule as its other state-changing route),
+  Owner preset, the only one that has it), the world's own page as `Origin` — a loopback host and the page's port,
+  stricter than its other routes' "any local origin", because every question spends tokens (2026-10-05, review),
   `Content-Type: application/json` (so a cross-site form cannot post without a preflight) and a body of at most
   8 KB. It fails closed: no viewer, or one it cannot resolve, is refused.
 - `compass/ask.mjs` holds the bearer (`WORLD_ASK_BEARER`, else the events bearer). It checks the body as the Worker
-  does, so a bad one never leaves the machine. It forwards the body under a 40 s deadline, longer than the Worker's
-  own 25 s on the model call, so the Worker's `provider_timeout` arrives first. It passes the Worker's status back
+  does, so a bad one never leaves the machine. It forwards the body under a 50 s deadline (at most 55 s), longer
+  than the Worker's own 28 s after an ask starts, so the Worker's 502s arrive first, and shorter than the page's 60 s,
+  so the page hears the side port's 504. A timeout never claims the question stayed here: the ask may still be
+  running on the Worker. It passes the Worker's status back
   with the body cut to `spec/ask.v1.json`. It allows one question in flight. It logs the status, the error code and
   the PA's own run id, never the question or the answer.
 - The model call stays on the Worker. The fork still names no model endpoint (`npm test`), and the world still

@@ -19,6 +19,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { withTimeout } from './health.mjs'
+import { ASK_TIMEOUT_MS } from './config.mjs'
 
 /** The Worker's bounds (src/lib/ask-endpoint.ts), checked here first so a bad body never leaves the machine. */
 export const MAX_BODY_BYTES = 8 * 1024
@@ -220,8 +221,8 @@ export function retryAfterOf(value, now = Date.now()) {
  * bad_answer (a 200 that is not an answer).
  */
 export function createAsk(cfg, { fetchImpl: rawFetch = globalThis.fetch, log = () => {}, now = Date.now } = {}) {
-  const fetchImpl = withTimeout(rawFetch, cfg.askTimeoutMs ?? 50_000)
-  const after = `${Math.round((cfg.askTimeoutMs ?? 50_000) / 1000)} s`
+  const fetchImpl = withTimeout(rawFetch, cfg.askTimeoutMs ?? ASK_TIMEOUT_MS)
+  const after = `${Math.round((cfg.askTimeoutMs ?? ASK_TIMEOUT_MS) / 1000)} s`
   /** Nit 7: whatever the Worker sends back, neither bearer's value is passed on. */
   const secrets = secretsOf(cfg.askBearerToken, cfg.eventsBearerToken)
   let inFlight = false
@@ -255,14 +256,14 @@ export function createAsk(cfg, { fetchImpl: rawFetch = globalThis.fetch, log = (
         })
       } catch (err) {
         return err?.name === 'TimeoutError'
-          ? done(504, { error: 'worker_timeout', detail: `The Worker did not answer within ${after}.` })
+          ? done(504, { error: 'worker_timeout', detail: `The Worker did not answer within ${after}. The ask may still be running there; if it is, the Worker records it as its own run.` })
           : done(502, { error: 'worker_unreachable', detail: 'The Worker could not be reached from this machine.' })
       }
       let payload = null
       try {
         payload = await res.json()
       } catch (err) {
-        if (err?.name === 'TimeoutError') return done(504, { error: 'worker_timeout', detail: `The Worker did not finish its answer within ${after}.` })
+        if (err?.name === 'TimeoutError') return done(504, { error: 'worker_timeout', detail: `The Worker did not finish its answer within ${after}. The ask may still be running there; if it is, the Worker records it as its own run.` })
         payload = null // an error page that is not JSON: the status speaks for it
       }
       if (res.status === 200) {

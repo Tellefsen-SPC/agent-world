@@ -118,6 +118,7 @@ function ensureOverlayApi() {
     archive, // U32: GET /archive
     spend, // U35: GET /spend — the Worker's spend object; the overlay folds it through the pack (overlay/spend.mjs)
     ask, // U16: POST /ask — the PA, Owner only (the `ask` capability), forwarded by compass/ask.mjs
+    pagePort: cfg.pagePort, // the PA answers the world's own page only (host and port)
     // Who is asking: today the one viewer from WORLD_VIEWER_PRESET; at M3 the identity the hosted world's sign-in hands the request
     // (docs/adr/0006). The sidecar answers spend to the Owner only, takes a layout write only with `layout`, and a question only with `ask`.
     viewerFor: () => viewer,
