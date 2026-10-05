@@ -199,7 +199,7 @@ test("approval: the in-tray and the panel — the label, the surface's name, App
   // two proposals on one run: the row is the oldest gate, and its Approve opens that proposal — not the newest
   const SECOND = '1e2d3c4b-5a69-4788-9766-554433221100'
   const two = await threadFor({ gate: `approval:${PROPOSAL}` }, { extra: [ev('e3', 'gate_waiting', { surface: 'approval', gate: `approval:${SECOND}` }, { at: '2026-10-06T07:30:00Z' })] })
-  assert.equal(two.ref.url, `${WORKER}/console/proposals/${SECOND}`, 'Open goes to the newest gate, as for every run')
+  assert.equal(two.ref.url, CONSOLE, 'Open goes to the oldest gate, the one the row and the panel name (confirmation 4)')
   const [r2] = intrayRows([two])
   assert.equal(r2.gate, `approval:${PROPOSAL}`)
   assert.equal(r2.url, CONSOLE, "the row's Approve opens its own proposal")
@@ -365,4 +365,62 @@ test('approval (confirmation 1): under client, a hidden proposal leaves no trace
   const l = await toThread(live.get(RUN), null, viewer, surfaces, NOW, { place })
   assert.equal(isLive(live.get(RUN), l, NOW, 2 * 3600e3), true)
   assert.equal(buildStill({ now: NOW, runs: live, threadOf: new Map([[RUN, l]]), pack, place, viewer }).counts.running, 1)
+})
+
+test('approval (confirmation 4): on a run with several gates, the title, the panel, the tag, the preview, Open and the tray row all come from one gate — the oldest the viewer can tap', async () => {
+  const { buildStill } = await import(path.join(root, 'server/harnesses/compass/still.mjs'))
+  const { loadPack } = await import(path.join(root, 'server/harnesses/compass/pack.mjs'))
+  const pack = loadPack('tellefsen-campus')
+  const place = (c) => ({ zone: c || 'ZZTEST HQ', planet: 'zz', pack: pack.id, town: Boolean(c) })
+  const AIRTABLE = 'https://airtable.com/appZZ/tblZZ/recZZ'
+  const pa = (id, at) => ev(id, 'gate_waiting', { surface: 'pending_approval', gate: 'ZZTEST gate', ref_url: AIRTABLE }, { at })
+  const prop = (id, at) => ev(id, 'gate_waiting', { surface: 'approval', gate: `approval:${PROPOSAL}` }, { at })
+  const decision = (id, at) => ev(id, 'gate_waiting', { surface: 'decision', gate: 'ZZTEST decision', ref_url: 'https://app.notion.com/p/zztest-decision' }, { at })
+  const everything = async (events, preset) => {
+    const runs = fold(events)
+    const viewer = makeViewer({ preset })
+    const t = await toThread(runs.get(RUN), null, viewer, surfaces, NOW, { place, consoleProposalsUrl: `${WORKER}/console/proposals` })
+    const req = buildStill({ now: NOW, runs, threadOf: new Map([[RUN, t]]), pack, place, viewer }).threads.find((x) => x.id === RUN)
+    const [row] = intrayRows([req])
+    return { t, req, row, panel: intray.panelAsk(req) }
+  }
+  const intray = await import(path.join(root, 'overlay/intray.mjs'))
+  const T1 = '2026-10-06T07:00:00Z', T2 = '2026-10-06T07:30:00Z'
+  const PA_LINE = 'A Pending Approval row is waiting. Open it in Airtable and set its Status to Approved or Rejected.'
+
+  // the Owner, the Pending Approval row first: everything is that row's
+  {
+    const { t, req, row, panel } = await everything([ev('e1', 'run_started'), pa('e2', T1), prop('e3', T2)], 'owner')
+    assert.equal(req.title, '? Approve · Airtable')
+    assert.equal(t.gitBranch, 'approve in Airtable', 'the tag')
+    assert.ok(t.preview.startsWith(`ZZTEST gate (2 of 2 left) — ${PA_LINE}`), `the preview: ${t.preview}`)
+    assert.equal(t.ref.url, AIRTABLE, 'Open')
+    assert.equal(t.ref.console, undefined)
+    assert.equal(t.ref.context, '')
+    assert.deepEqual([row.gate, row.what, row.url], ['ZZTEST gate', 'approve in Airtable', AIRTABLE], 'the tray row')
+    assert.equal(panel.gate, 'ZZTEST gate', 'the panel names the same gate…')
+    assert.ok(panel.instruction.startsWith(PA_LINE), `…and gives that gate's instruction: ${panel.instruction}`)
+  }
+  // the Owner, the proposal first: everything is the proposal's
+  {
+    const { t, req, row, panel } = await everything([ev('e1', 'run_started'), prop('e2', T1), pa('e3', T2)], 'owner')
+    assert.equal(req.title, '? Approve · Compass')
+    assert.equal(t.gitBranch, 'approve in Compass')
+    assert.ok(t.preview.startsWith(`approval:${PROPOSAL} (2 of 2 left) — ${LONG}`))
+    assert.equal(t.ref.url, CONSOLE)
+    assert.equal(t.ref.console, true)
+    assert.deepEqual([row.gate, row.what, row.url], [`approval:${PROPOSAL}`, 'approve in Compass', CONSOLE])
+    assert.equal(panel.gate, `approval:${PROPOSAL}`)
+    assert.ok(panel.instruction.startsWith(LONG))
+  }
+  // an operator, whose oldest gate is someone else's: everything is the oldest gate they can tap
+  {
+    const { t, req, row, panel } = await everything([ev('e1', 'run_started'), decision('e2', T1), pa('e3', T2)], 'operator')
+    assert.equal(req.title, '? Approve · Airtable')
+    assert.equal(t.gitBranch, 'approve in Airtable')
+    assert.equal(t.ref.url, AIRTABLE)
+    assert.deepEqual([row.gate, row.url], ['ZZTEST gate', AIRTABLE])
+    assert.equal(panel.gate, 'ZZTEST gate')
+    assert.ok(panel.instruction.startsWith(PA_LINE))
+  }
 })

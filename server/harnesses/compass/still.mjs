@@ -26,7 +26,7 @@
  */
 import { roomForSkill, roomName, roomsOf } from './pack.mjs'
 import { notionId, airtableRef } from './surfaces.mjs'
-import { sizeBytesForProgress, whatToDo, whatToDoLong } from './threads.mjs'
+import { sizeBytesForProgress, whatToDo, whatToDoLong, askedGate } from './threads.mjs'
 
 export const DAY_MS = 24 * 3600 * 1000
 const str = (v) => (typeof v === 'string' ? v.trim() : '')
@@ -128,8 +128,9 @@ export function buildStill({ now, ttlMs = 2 * 3600 * 1000, runs, threadOf, proje
       // A ? only for a gate this viewer can tap (D2, 2026-09-05): a gate that is someone else's makes no thread for
       // this viewer — the still map has no quiet figure to give it (M1 showed one). Owner taps every surface.
       if (!t.unread) continue
-      // titled by a gate this viewer can tap: on a run with a client_gate and a proposal, the client's own (review 2)
-      const g = pending.find((x) => x.canTap) || pending[0]
+      // titled by the gate the thread is about — the oldest this viewer can tap, else the oldest (threads.mjs askedGate):
+      // on a run with a client_gate and a proposal, the client's own (review 2); one gate for title and card (confirmation 4)
+      const g = askedGate(pending)
       const at = townOrRoom(root.client, roomOfSkill(run.skill))
       counts.needYou++
       threads.push(base({

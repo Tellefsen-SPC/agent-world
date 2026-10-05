@@ -18,6 +18,18 @@ export const wearsAlert = (t) => Boolean(t && t.kind === 'request' && t.hasError
 const ownQuestion = (t) => t?.kind !== 'fixture' && wearsQuestion(t) && !t.inheritedGate
 const isRow = (t) => ownQuestion(t) || wearsAlert(t)
 
+/**
+ * The gate a request is about: the oldest one the viewer can tap, else the oldest — a gate someone else must tap never
+ * sets the row's age. The adapter picks the same gate for the title, the tag, the preview and Open (compass/threads.mjs
+ * askedGate), so the row, the panel and the card always name one gate (confirmation 4, 2026-10-06).
+ */
+export function askedGateOf(t) {
+  const all = (Array.isArray(t?.gates) ? t.gates : []).filter(Boolean)
+  const mine = all.filter((g) => g.canTap !== false)
+  const pool = mine.length ? mine : all
+  return pool.length ? [...pool].sort((a, b) => num(a.at) - num(b.at))[0] : null
+}
+
 /** The rows, in N's order. */
 export function intrayRows(threads) {
   const list = (Array.isArray(threads) ? threads : []).filter(isRow)
@@ -26,9 +38,7 @@ export function intrayRows(threads) {
       // M2b: a request's title is badge · verb · surface; the skill rides on `skill`. Older shapes split the title.
       const skill = t.skill || String(t.title || '').split(' · ')[0]
       // The oldest gate the viewer can tap (the ? is theirs); a gate someone else must tap never sets the row's age.
-      const all = Array.isArray(t.gates) ? t.gates : []
-      const mine = all.filter((g) => g.canTap !== false)
-      const gate = (mine.length ? mine : all).length ? [...(mine.length ? mine : all)].sort((a, b) => num(a.at) - num(b.at))[0] : null
+      const gate = askedGateOf(t)
       const alert = wearsAlert(t) && !wearsQuestion(t)
       if (alert) {
         return { id: t.id, badge: '!', skill: skill || 'Untitled run', zone: t.project || '', gate: '', surface: '', what: t.gitBranch || 'failed', url: t.ref?.url || '', at: num(t.lastActivityAt), left: 0 }
@@ -41,7 +51,7 @@ export function intrayRows(threads) {
         gate: gate?.gate || String(t.title || '').split(' · ').slice(1).join(' · '),
         surface: gate?.surface || '',
         what: gate?.what || t.gitBranch || '',
-        // the row's own gate's surface — a run can leave several gates and Open (U5) goes to the newest; a
+        // the row's own gate's surface — a run can leave several gates; Open goes to this same gate (askedGateOf); a
         // session gate has no surface of its own, so it takes the run's link (the Claude Project or the terminal).
         // An approval-layer gate carries its own link (its proposal in the Compass console, from the adapter): Approve
         // opens that proposal or nothing, never another link the run happens to carry.
@@ -55,20 +65,24 @@ export function intrayRows(threads) {
     .sort((a, b) => (a.badge === b.badge ? 0 : a.badge === '!' ? -1 : 1) || a.at - b.at || String(a.id).localeCompare(String(b.id)))
 }
 
+/** The count the adapter puts after a gate's name on a run with several gates: "<gate> (n of m left) — …". */
+const LEFT = /^ \(\d+ of \d+ left\) — /
 /**
- * What the selection panel's "What it wants from you" names (overlay/main.js): the gate, and the full instruction when
- * the adapter's preview starts with "<gate> — ". A request names the first gate this viewer can tap, else its first —
- * the rule compass/still.mjs titles a request by — so on a run with the client's own gate and a proposal the client
- * reads their gate, never the blank entry an approval gate they cannot tap leaves in `gates` (review, 2026-10-06). A
- * thread of the older shape names its gate in the title, after the skill.
+ * What the selection panel's "What it wants from you" names (overlay/main.js): the gate, and the full instruction the
+ * adapter's preview gives after "<gate> — " (or "<gate> (n of m left) — " on a run with several gates). A request names
+ * the gate it is about, askedGateOf — the one the adapter built the preview from — so the panel never pairs one gate's
+ * name with another's instruction (confirmation 4), and on a mixed run the client reads their own gate (review,
+ * 2026-10-06). A thread of the older shape names its gate in the title, after the skill.
  */
 export function panelAsk(thread) {
-  const gates = Array.isArray(thread?.gates) ? thread.gates : []
   const gate = thread?.kind === 'request'
-    ? String((gates.find((g) => g?.canTap) || gates[0])?.gate || '')
+    ? String(askedGateOf(thread)?.gate || '')
     : String(thread?.title || '').split(' · ').slice(1).join(' · ')
   const preview = String(thread?.preview || '')
-  return { gate, instruction: gate && preview.startsWith(gate + ' — ') ? preview.slice(gate.length + 3) : '' }
+  if (!gate || !preview.startsWith(gate)) return { gate, instruction: '' }
+  const rest = preview.slice(gate.length)
+  const head = rest.startsWith(' — ') ? 3 : (LEFT.exec(rest)?.[0].length || 0)
+  return { gate, instruction: head ? rest.slice(head) : '' }
 }
 
 /**

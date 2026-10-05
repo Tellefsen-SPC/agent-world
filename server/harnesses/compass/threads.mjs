@@ -17,6 +17,19 @@ export const sizeBytesForProgress = (p) => Math.round(10 ** (3 + 3.5 * clamp(Num
 export const sizeBytesFor = (done, total) => sizeBytesForProgress(total > 0 ? clamp(done / total, 0.05, 1) : 0.05)
 
 const newest = (list) => (list.length ? list.reduce((a, b) => (b.at >= a.at ? b : a)) : null)
+/** The oldest by `at`; on a tie, the first in the list (the fold's order) — the in-tray's stable sort picks the same. */
+const oldest = (list) => (list.length ? list.reduce((a, b) => (b.at < a.at ? b : a)) : null)
+
+/**
+ * The gate a run's thread is about: the oldest one the viewer can tap, else the oldest one it may see. It is the in-tray's
+ * order (overlay/intray.mjs askedGateOf), so the request's title (still.mjs), the panel (panelAsk), the card's tag, the
+ * preview, Open and the Context link all name one gate. Before 2026-10-06 (confirmation 4) the title and the panel took
+ * the oldest and the rest the newest, so the panel could pair one gate's name with another's instruction.
+ */
+export function askedGate(gates, canTap = (g) => Boolean(g?.canTap)) {
+  const list = Array.isArray(gates) ? gates.filter(Boolean) : []
+  return oldest(list.filter((g) => canTap(g))) || oldest(list)
+}
 
 /**
  * What the human has to do to clear a gate, by surface. Rendered on the card as a tag
@@ -127,12 +140,11 @@ export function gateUrl(gate, { consoleProposalsUrl = '' } = {}) {
   return isLink(gate?.ref_url) ? gate.ref_url : ''
 }
 
-export function openUrlFor(run, row, gatesOpen, { claudeProjectUrl = '', consoleProposalsUrl = '' } = {}) {
+/** Where Open lands for a run, given the gate its thread is about (askedGate), or null when it has none. */
+export function openUrlFor(run, row, gate, { claudeProjectUrl = '', consoleProposalsUrl = '' } = {}) {
   // A class_b_gate on a run that lives in a Claude session opens that session — the answer goes
   // there, not on the page the gate happens to reference (that page becomes ref.context).
-  const g0 = newest(gatesOpen)
-  if (g0 && g0.surface === 'class_b_gate' && (run.trigger === 'claude_project' || run.trigger === 'chat') && isLink(claudeProjectUrl)) return claudeProjectUrl
-  const gate = newest(gatesOpen)
+  if (gate && gate.surface === 'class_b_gate' && (run.trigger === 'claude_project' || run.trigger === 'chat') && isLink(claudeProjectUrl)) return claudeProjectUrl
   const link = gate ? gateUrl(gate, { consoleProposalsUrl }) : ''
   if (link) return link
   const art = newest(run.artifacts.filter((a) => isLink(a.notion_url)))
@@ -218,14 +230,15 @@ export async function toThread(run, row, viewer, surfaces, now = Date.now(), opt
   const openShown = open.filter((g) => !hidden(g))
 
   const progress = run.project ? await surfaces.progress(run.project) : 0.05
-  const gate = newest(shown)
+  // the one gate the title, the panel, the tag, the preview, Open and Context are about (askedGate)
+  const gate = askedGate(shown, (g) => viewer.canTap(g))
   // An approval gate's ref_url is never the Context link: whatever it says, the layer did not write it (review 1).
   const contextUrl = gate && gate.surface !== 'approval' && isLink(gate.ref_url) ? gate.ref_url : ''
   // A run can leave several gates (a content run leaves one per draft). Say so, or the human signs
   // one and wonders why the ? is still there — seen live 2026-09-06. Open goes to the next pending one.
   const gateLabel = gate ? (openShown.length > 1 ? `${gate.gate} (${shown.length} of ${openShown.length} left)` : gate.gate) : ''
   const art = newest(run.artifacts)
-  const openUrl = openUrlFor(run, row, shown, opts)
+  const openUrl = openUrlFor(run, row, gate, opts)
   // Set here, on the server, when Open is the Compass console's page for the gate's proposal: the panel's "Open in
   // Compass" reads this flag, never the link's shape (review 1).
   const gateLink = gate ? gateUrl(gate, opts) : ''
