@@ -181,3 +181,12 @@ test('VERIFICATION and RUNBOOK cite the Compass repo\'s ADR and RUNBOOK by numbe
   assert.ok(!/\(ADR-0009 in the Compass repo\)|RUNBOOK §9;/.test(v), 'the old numbers alone are gone')
   assert.match(read('RUNBOOK.md'), /RUNBOOK §13 · "The PA route — `POST \/ask`"/)
 })
+
+test('ADR-0008 says where known names come from and what the backstop cannot catch (review of ed7aba9, 1 and 3)', () => {
+  const adr = fs.readFileSync(path.join(root, 'docs/adr/0008-the-pa-is-asked-through-the-sidecar.md'), 'utf8')
+  assert.match(adr, /from the substrate only/)
+  assert.match(adr, /Never from ledger events or rows/)
+  assert.match(adr, /An inactive client seen only in events, used as an actor, is\s+withheld/)
+  assert.match(adr, /a real person whose handle equals a skipped value: someone whose handle is `claude`; a sole-trader client named\s+after its owner/)
+  assert.match(adr, /a handle that equals a company key or a room id/)
+})

@@ -77,7 +77,11 @@ holds names and numbers only (`overlay/zones.mjs`: "No token ever reaches this f
   - names outside the 14-day window, or never in the ledger;
   - a first name alone when the actor is a full name;
   - a lower-case name;
-  - a judgement with no name at all.
+  - a judgement with no name at all;
+  - a real person whose handle equals a skipped value: someone whose handle is `claude`; a sole-trader client named
+    after its owner, when the owner taps under that name; a handle that equals a company key or a room id. The
+    backstop then treats the handle as a machine or a place and does not catch it. The Worker states the same limit
+    (a person whose name is also a whole known phrase is treated as known).
   It errs toward withholding: "Will this run finish?" is withheld when someone called Will has acted. It fails open
   when there is no scan yet: the Worker's own check then stands alone.
 - Using actor values this way is new. CLAUDE.md said `actor` draws an avatar and nothing else. This is a protective
