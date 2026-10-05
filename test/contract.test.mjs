@@ -1,6 +1,7 @@
 // Agent World — U34: contract v1. The schemas validate the captured Worker responses and the packs;
 // the adapter reads exactly five Worker routes (U35 added /world/spend, ES-4.13; U37 /ledger/cost, from Compass U5;
-// U7 /events/stream, the ledger as server-sent events — the realtime nudge, 2026-10-04).
+// U7 /events/stream, the ledger as server-sent events — the realtime nudge, 2026-10-04) and asks one, the sixth:
+// POST /ask (U16W wiring, ES-4.6, 2026-10-05), from compass/ask.mjs only, behind the sidecar (docs/adr/0008).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -60,6 +61,42 @@ test('U37: the live GET /ledger/cost capture validates too, once scripts/capture
   assert.ok(!JSON.stringify(read(live)).includes('"actor"'), 'no per-person field')
 })
 
+test('U16W: spec/ask.v1.json — the sidecar cuts every answer and error the Worker gives (compass-ask, synthetic) to the schema; the schema refuses an answer without its keys, a stray key and a person-shaped field', async () => {
+  const { normaliseAnswer, normaliseError, retryAfterOf } = await import(path.join(root, 'server/harnesses/compass/ask.mjs'))
+  const schema = read('spec/ask.v1.json')
+  const cases = read('test/fixtures/ask.synthetic.json')
+  let answers = 0
+  let errors = 0
+  for (const [name, c] of Object.entries(cases)) {
+    if (name.startsWith('_')) continue
+    if (c.status === 200) {
+      const cut = normaliseAnswer(c.body)
+      assert.deepEqual(validate(schema, cut), [], name)
+      assert.deepEqual(cut, c.body, `${name}: an answer already in the contract's shape passes through unchanged`)
+      answers++
+    } else {
+      const cut = normaliseError(c.status, c.body, c.retry_after === undefined ? null : retryAfterOf(c.retry_after))
+      assert.deepEqual(validate(schema.$defs.error, cut), [], name)
+      for (const k of Object.keys(cut)) assert.ok(k in schema.$defs.error.properties, `${name}: ${k} is a contract key`)
+      errors++
+    }
+  }
+  assert.ok(answers >= 3 && errors >= 8, 'an answer, two refusals and the error statuses')
+  // the budget's wait rides on the body as whole seconds
+  assert.equal(normaliseError(429, cases.budget.body, retryAfterOf(cases.budget.retry_after)).retry_after, 15120)
+  // a Worker body with a key the contract has not got: the raw body fails the schema; the cut drops the key
+  const stray = { ...cases.answer.body, actor: 'someone', note: 'not in the contract' }
+  assert.ok(validate(schema, stray).some((e) => /unexpected "actor"/.test(e)))
+  assert.deepEqual(validate(schema, normaliseAnswer(stray)), [])
+  assert.ok(!('actor' in normaliseAnswer(stray)), 'no person-shaped field survives the cut')
+  assert.ok(validate(schema.$defs.error, cases.provider_failed.body).some((e) => /unexpected "ledger"/.test(e)), 'the raw provider error carries a key the panel does not get')
+  // an answer short of its keys, or with a provider outside the enum, is refused
+  const { run_id: _r, ...noRun } = cases.answer.body
+  assert.ok(validate(schema, noRun).some((e) => /missing required "run_id"/.test(e)))
+  assert.ok(validate(schema, { ...cases.answer.body, provider: 'someone-else' }).some((e) => /provider/.test(e)))
+  assert.ok(!/actor/i.test(JSON.stringify(schema)), 'the schema names no person-shaped field')
+})
+
 test('U34: spec/pack.v1.json validates both shipped packs and carries figure ∈ {character, marker}', () => {
   const schema = read('spec/pack.v1.json')
   for (const id of ['tellefsen-campus', 'neutral']) assert.deepEqual(validate(schema, read(`overlay/packs/${id}/pack.json`)), [], id)
@@ -79,10 +116,11 @@ const walk = (dir, out = []) => {
   }
   return out
 }
-test('U34/U35/U37/U7: the adapter reads only /ledger/scan, /world/substrate, /world/spend, /ledger/cost and /events/stream — any other Worker route in server/harnesses/compass* fails', () => {
+test('U34/U35/U37/U7/U16: the adapter reads only /ledger/scan, /world/substrate, /world/spend, /ledger/cost and /events/stream, and asks only /ask — six routes; any other Worker route in server/harnesses/compass* fails', () => {
   const files = [path.join(root, 'server/harnesses/compass.mjs'), ...walk(path.join(root, 'server/harnesses/compass'))]
-  const allowed = new Set(['/ledger/scan', '/world/substrate', '/world/spend', '/ledger/cost', '/events/stream'])
-  const WORKER_FIELD = /ledgerUrl|substrateUrl|spendUrl|ledgerCostUrl|streamUrl|eventsUrl/
+  const allowed = new Set(['/ledger/scan', '/world/substrate', '/world/spend', '/ledger/cost', '/events/stream', '/ask'])
+  assert.equal(allowed.size, 6, 'six Worker routes: five reads and the PA')
+  const WORKER_FIELD = /ledgerUrl|substrateUrl|spendUrl|ledgerCostUrl|streamUrl|askUrl|eventsUrl/
   const hits = []
   for (const f of files) {
     const text = fs.readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
@@ -94,10 +132,11 @@ test('U34/U35/U37/U7: the adapter reads only /ledger/scan, /world/substrate, /wo
     // a Worker URL is built in config.mjs and nowhere else: no other file may touch eventsUrl or assemble one from a Worker field
     if (path.basename(f) !== 'config.mjs') {
       assert.ok(!/eventsUrl/.test(text), `${path.relative(root, f)} references eventsUrl — Worker URLs are config.mjs's to derive`)
-      assert.ok(!/(ledgerUrl|substrateUrl|spendUrl|ledgerCostUrl|streamUrl)\s*\.\s*(replace|slice|split|concat)\(/.test(text), `${path.relative(root, f)} rebuilds a Worker URL from a derived field`)
+      assert.ok(!/(ledgerUrl|substrateUrl|spendUrl|ledgerCostUrl|streamUrl|askUrl)\s*\.\s*(replace|slice|split|concat)\(/.test(text), `${path.relative(root, f)} rebuilds a Worker URL from a derived field`)
       // U37: every Worker URL assembled anywhere — whatever it is then handed to (a variable, a retry, a cache) — is one of the reads
       // (U7: the stream URL is never assembled: it is requested verbatim, the resume point travels in Last-Event-ID)
-      for (const m of text.matchAll(/`\$\{cfg\.(?:ledgerUrl|substrateUrl|spendUrl|ledgerCostUrl|streamUrl)\}[^`]*`/g)) {
+      // (U16: the ask URL is never assembled either: the question travels in the POST body)
+      for (const m of text.matchAll(/`\$\{cfg\.(?:ledgerUrl|substrateUrl|spendUrl|ledgerCostUrl|streamUrl|askUrl)\}[^`]*`/g)) {
         const url = m[0]
         assert.ok(url.startsWith('`${cfg.ledgerUrl}?since=') || url.startsWith('`${cfg.spendUrl}?window=') || url.startsWith('`${cfg.ledgerCostUrl}?days=1'), `${path.relative(root, f)} assembles a Worker URL that is not one of the reads: ${url}`)
       }
@@ -105,6 +144,11 @@ test('U34/U35/U37/U7: the adapter reads only /ledger/scan, /world/substrate, /wo
       for (const m of text.matchAll(/(?:fetch(?:Impl)?|cached)\s*\(\s*([^,)]+)/g)) {
         const arg = m[1].trim()
         if (!WORKER_FIELD.test(arg)) continue
+        // U16: the PA's question goes to cfg.askUrl verbatim, and only from compass/ask.mjs (the one POST — invariants.test.mjs)
+        if (arg === 'cfg.askUrl') {
+          assert.equal(path.basename(f), 'ask.mjs', `${path.relative(root, f)} asks the Worker's /ask — only compass/ask.mjs may`)
+          continue
+        }
         assert.ok(arg === 'cfg.substrateUrl' || arg.startsWith('`${cfg.ledgerUrl}?since=') || arg.startsWith('`${cfg.spendUrl}?window=') || arg.startsWith('`${cfg.ledgerCostUrl}?days=1'), `${path.relative(root, f)} fetches a Worker URL that is not one of the reads: ${arg}`)
       }
       // U7: a request made with node:http(s) — .get( / .request( — on a Worker field is the stream, verbatim, and only from stream.mjs

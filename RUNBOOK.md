@@ -54,7 +54,7 @@ Compass early because something changed.
 | `AIRTABLE_TOKEN` | — (secret) | Reads Pending Approval, the pipeline and finance. |
 | `AIRTABLE_BASE_ID` | `appixWl8C3bogLsvp` | The HQ base. |
 | `CLAUDE_PROJECT_URL` | — | Where Open goes for a chat run. |
-| `WORLD_VIEWER_PRESET` | `owner` | Who is looking: `owner`, `operator`, `viewer`, `client` or `prime`. Only `owner` sees spend, and only `owner` may save plot moves on planets other than home. |
+| `WORLD_VIEWER_PRESET` | `owner` | Who is looking: `owner`, `operator`, `viewer`, `client` or `prime`. Only `owner` sees spend, asks the PA, and may save plot moves on planets other than home. |
 | `WORLD_WINDOW_DAYS` | `14` | How far back the ledger is read. |
 | `WORLD_RUNNING_TTL_HOURS` | `2` | A run with no activity for this long stops counting as running. |
 | `WORLD_TENANT` | `tellefsen` | The tenant name the viewer carries. |
@@ -63,6 +63,8 @@ Compass early because something changed.
 | `WORLD_LEDGER_LONG_TIMEOUT_MS` | `120000` | The same for the 30-day background read (the silent-skills list). It never holds up the screen. |
 | `WORLD_READ_TIMEOUT_MS` | `10000` | The same for every other read: the client map, spend, Notion and Airtable. |
 | `WORLD_STREAM` | on | The live nudge from the Worker's event stream. `0` turns it off; the world then refreshes on its polls alone, as before. |
+| `WORLD_ASK_BEARER` | unset (secret) | Only if the Worker has its own `ASK_BEARER` for the PA: the same value here. Unset, the PA is asked with `EVENTS_BEARER_TOKEN`. The token stays on this machine's server side; the browser never sees it. |
+| `WORLD_ASK_TIMEOUT_MS` | `40000` | How long the side port waits for the PA's answer. Keep it above the Worker's own 25 s on the model call. |
 | `NOTION_DS_CONTENT`, `NOTION_DS_RESEARCH`, `NOTION_DS_DELIVERABLES`, `NOTION_DS_INTEGRATIONS`, `NOTION_DS_FIELD_MAPPINGS`, `NOTION_DS_SYSTEM_HEALTH`, `NOTION_DS_TASKS` | unset | Notion data-source ids for the room panels. A panel whose id is missing says `SKIPPED:ENV — set <name>`. |
 | `PIPELINE_HOT_VIEW` | `Active pipeline` | The Airtable view the strategy room lists. |
 | `DEBUG` | unset | `world` prints the adapter's log. |
@@ -166,6 +168,11 @@ npm test
 | A `?` stays after you approved | Wait one poll (15 s). Is the gate a Claude Code permission prompt? Those clear only when the session answers. Does the terminal say `cross-check unavailable`? | That is a missing or expired `AIRTABLE_TOKEN` or `NOTION_TOKEN`: renew it in `.env`, restart. |
 | No spend line on town cards | `curl -s -o /dev/null -w '%{http_code}\n' 127.0.0.1:5275/spend`: **403** means the viewer is not Owner | Set `WORLD_VIEWER_PRESET=owner`, restart. A 200 with no line: the pack is `neutral`, which never shows spend. |
 | The town card reads `Today · unavailable` | Compass U5 (`GET /ledger/cost`) is not deployed, is failing, or last answered on an earlier day (UTC) | Nothing to fix here; it fills in once U5 answers. |
+| The PA panel says **PA not switched on** | `curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: Bearer $EVENTS_BEARER_TOKEN" -H 'Content-Type: application/json' -d '{}' "${EVENTS_URL%/events}/ask"` (after `set -a; . ./.env; set +a`): **404** means the Worker has no `/ask` route yet (U16W not deployed); **400** means the route is there, so the panel's line names what the Worker is missing (`ask_not_configured`: provider, model or key) | A Worker deploy or a key: Christoffer's step, in the Compass repo's RUNBOOK §6. Nothing to fix here. |
+| The PA panel says **not switched on on this machine** | `EVENTS_URL` does not end in `/events`, or no bearer is set | Fix `.env`, restart. |
+| The PA panel says **the Worker refused this machine's bearer** | The Worker has an `ASK_BEARER` and `WORLD_ASK_BEARER` is unset or different | Put the Worker's `ASK_BEARER` value in `WORLD_ASK_BEARER`, restart. |
+| The PA panel says **the PA's budget for today is spent** | The Worker's daily limit (`ASK_DAILY_LIMIT`, `ASK_DAILY_TOKEN_LIMIT`) is reached; the panel shows the wait | Wait for 00:00 UTC (04:00 Muscat), or raise the limit in the Compass repo (a reviewed PR). |
+| No PA panel, and P takes a screenshot | The viewer is not Owner: only Owner holds the `ask` capability | Set `WORLD_VIEWER_PRESET=owner`, restart. |
 | A plot moved on another planet (not home) is back where it was after a reload | The viewer is not Owner: the side port refuses its layout writes (403) | Set `WORLD_VIEWER_PRESET=owner` on the machine that arranges the map. (The home planet's layout is saved by Bot Crossing's own API, which does not know the viewer.) |
 | Terminal warns `realtime: stream unavailable — the Worker has no GET /events/stream (404)` | The Worker on Cloudflare is older than its `main` | Harmless: the world runs on its polls. Set `WORLD_STREAM=0` to quiet it until the Worker is deployed. |
 | Terminal warns `realtime: stream unavailable — the Worker refused the events bearer (401)` | The token is wrong | As the 401 in section 3. |

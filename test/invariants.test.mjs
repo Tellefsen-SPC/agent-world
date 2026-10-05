@@ -1,7 +1,9 @@
 // Agent World — invariants that hold for every unit, every session. `npm test` runs this file.
 // 1. src/ is byte-identical to upstream (the fork's seam is one adapter file).
 // 2. The world burns zero tokens: no model endpoint or SDK anywhere outside node_modules.
-// 3. The adapter never writes to the substrate (static guard; the human checks prove it live).
+// 3. The adapter never writes to the substrate (static guard; the human checks prove it live). Two non-GETs are
+//    allowed, each pinned to one line in one file: Notion's data-source query (a read with a body) and the PA's
+//    question to the Worker's POST /ask (U16; the Worker, not the world, records the ask as its own run).
 // 4. The registry is exactly [compass].
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -74,6 +76,18 @@ test('the adapter never writes: no non-GET request and no supabase-js write chai
     if (allowed.length !== 1 || assignments.length !== 1 || !guarded || !/data_sources\/\$\{id\}\/query/.test(text)) return null
     return lines.filter((l) => !l.includes(ALLOWED_LINE)).join('\n') // the rest is checked like every other file
   }
+  // The second allowed non-GET (U16W wiring, ES-4.6; docs/adr/0008): the PA's question, POST to the Worker's /ask.
+  // It writes nothing the world owns: the Worker records the ask as its own governed run (its events and its
+  // ops_skill_runs row), as it records every model call it makes. compass/ask.mjs may hold exactly one method,
+  // POST, on exactly one fetch — to cfg.askUrl, verbatim — and no other file may.
+  const ASK_LINE = "method: 'POST',"
+  const askOnly = (text) => {
+    const lines = text.split('\n')
+    const methods = lines.filter((l) => /\.method\s*=/.test(l) || /method:\s*['"]/.test(l))
+    const fetches = [...text.matchAll(/fetchImpl\s*\(\s*([^,)]+)/g)].map((m) => m[1].trim())
+    if (methods.length !== 1 || methods[0].trim() !== ASK_LINE || fetches.length !== 1 || fetches[0] !== 'cfg.askUrl') return null
+    return lines.filter((l) => l.trim() !== ASK_LINE).join('\n')
+  }
   const chainNeedle = /\.from\([^)]*\)[\s\S]{0,200}?\.(insert|update|upsert|delete|rpc)\(/
   const hits = []
   for (const f of files) {
@@ -81,6 +95,11 @@ test('the adapter never writes: no non-GET request and no supabase-js write chai
     if (path.basename(f) === 'notion.mjs') {
       const rest = notionQueryOnly(text)
       if (rest == null) hits.push('server/harnesses/compass/notion.mjs: more than the one guarded Notion data-source query is written')
+      else text = rest
+    }
+    if (path.basename(f) === 'ask.mjs') {
+      const rest = askOnly(text)
+      if (rest == null) hits.push('server/harnesses/compass/ask.mjs: more than the one POST of the question to cfg.askUrl')
       else text = rest
     }
     for (const n of httpNeedles) if (n.test(text)) hits.push(`${path.relative(root, f)} matches ${n}`)

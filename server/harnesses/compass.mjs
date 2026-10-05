@@ -21,6 +21,7 @@ import { makeViewer } from './compass/viewer.mjs'
 import { createSurfaces } from './compass/surfaces.mjs'
 import { createSubstrate } from './compass/substrate.mjs'
 import { createSpend } from './compass/spend.mjs'
+import { createAsk } from './compass/ask.mjs'
 import { deriveWorld, worldDescriptor } from './compass/zones.mjs'
 import { createOverlayApi, startOverlayApi } from './compass/overlay-api.mjs'
 import { createSteering } from './compass/steering.mjs'
@@ -37,6 +38,8 @@ const viewer = makeViewer({ tenant: cfg.tenant, preset: cfg.viewerPreset })
 const surfaces = createSurfaces(cfg, { log })
 const substrate = createSubstrate(cfg, { log })
 const spend = createSpend(cfg, { log }) // U35: GET /world/spend, 60-s cache per window, served raw by the sidecar's /spend
+/** U16: the PA's question, forwarded to the Worker's POST /ask with the bearer — the browser never holds it (docs/adr/0008). */
+const ask = createAsk(cfg, { log })
 const steering = createSteering(cfg, { surfaces, substrate, log }) // U19: three panels, 5-min caches, served by the sidecar
 /** What the last scan saw — the room panels (U31) and the archive (U32) read it, never the ledger again. */
 let lastScan = null
@@ -114,8 +117,9 @@ function ensureOverlayApi() {
     rooms, // U31: GET /rooms, GET /rooms/<id>
     archive, // U32: GET /archive
     spend, // U35: GET /spend — the Worker's spend object; the overlay folds it through the pack (overlay/spend.mjs)
+    ask, // U16: POST /ask — the PA, Owner only (the `ask` capability), forwarded by compass/ask.mjs
     // Who is asking: today the one viewer from WORLD_VIEWER_PRESET; at M3 the identity the hosted world's sign-in hands the request
-    // (docs/adr/0006). The sidecar answers spend to the Owner only and takes a layout write only with `layout`.
+    // (docs/adr/0006). The sidecar answers spend to the Owner only, takes a layout write only with `layout`, and a question only with `ask`.
     viewerFor: () => viewer,
     // U20: the prospect rows ride with the world (one Airtable GET a minute); the overlay decides who stands and how faded.
     descriptor: async () => {

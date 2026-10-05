@@ -19,10 +19,15 @@
  *   GET  /planets/<key>/state      that planet's data/colony.<key>.json — created empty on first read
  *   PUT  /planets/<key>/state      write it (same field whitelist as api.mjs; the browser is the one writer) — only for a
  *                                  viewer with the `layout` capability (viewer.mjs presets: Owner); anyone else gets 403 {error}
+ *   POST /ask                      the PA (U16, ES-4.6): {question, context} → the Worker's POST /ask through compass/ask.mjs,
+ *                                  which holds the bearer — the browser never does (docs/adr/0008). Only for a viewer with
+ *                                  the `ask` capability (Owner), a local Origin and Content-Type application/json; the body
+ *                                  at most 8 KB. The Worker's status comes back with its body cut to spec/ask.v1.json.
  *
  * Writes only data/colony.<key>.json for a planet the substrate names, never the home file, never
  * anything else. Same Host + Origin discipline as api.mjs: loopback hosts, and a state change needs
- * a local Origin. Nothing here touches a token.
+ * a local Origin. Nothing here touches a token — the ask's bearer lives in compass/ask.mjs — and nothing here logs a
+ * question or an answer.
  *
  * Who is asking: `viewerFor(req)` returns the viewer for this request (viewer.mjs). Today the adapter hands back its one
  * viewer from WORLD_VIEWER_PRESET; at M3 the identity comes from the hosted world's sign-in (Cloudflare Access is proposed: ADR 0006, D10, to ratify) and only viewerFor changes.
@@ -45,6 +50,11 @@ export const mayReadSpend = (viewer) => viewer?.preset === 'owner'
 /** The layout file is the world's only write; it needs the `layout` capability (viewer.mjs: Owner). */
 export const mayWriteLayout = (viewer) =>
   typeof viewer?.canWriteLayout === 'function' ? viewer.canWriteLayout() === true : Array.isArray(viewer?.capabilities) && viewer.capabilities.includes('layout')
+/** The PA is asked only by a viewer holding `ask` (viewer.mjs: Owner) — every question spends tokens on the Worker. */
+export const mayAsk = (viewer) =>
+  typeof viewer?.canAsk === 'function' ? viewer.canAsk() === true : Array.isArray(viewer?.capabilities) && viewer.capabilities.includes('ask')
+/** The Worker's own bound on the ask body (docs/ask.md): a bigger one is refused here and never sent. */
+export const ASK_BODY_LIMIT = 8 * 1024
 
 const asObject = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {})
 const asArray = (v) => (Array.isArray(v) ? v : [])
@@ -77,7 +87,7 @@ function readJsonBody(req, limit = 4 * 1024 * 1024) {
     req.on('data', (c) => {
       size += c.length
       if (size > limit) {
-        reject(new Error('Body too large'))
+        reject(Object.assign(new Error('Body too large'), { code: 'too_large' }))
         req.destroy()
         return
       }
@@ -99,7 +109,7 @@ function readJsonBody(req, limit = 4 * 1024 * 1024) {
  * @param descriptor () => the JSON for GET /world (may be async)
  * @param dataDir   where colony.<key>.json files live
  */
-export function createOverlayApi({ getWorld, descriptor, steering = null, rooms = null, archive = null, spend = null, viewerFor = () => null, dataDir = DEFAULT_DATA_DIR, log = () => {} }) {
+export function createOverlayApi({ getWorld, descriptor, steering = null, rooms = null, archive = null, spend = null, ask = null, viewerFor = () => null, dataDir = DEFAULT_DATA_DIR, log = () => {} }) {
   const fileFor = (key) => path.join(dataDir, `colony.${key}.json`)
   /** The viewer for this request, or null — a viewerFor that throws is no viewer (fail closed). */
   const viewerOf = (req) => {
@@ -142,12 +152,12 @@ export function createOverlayApi({ getWorld, descriptor, steering = null, rooms 
     const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', Vary: 'Origin' }
     if (originLocal) {
       headers['Access-Control-Allow-Origin'] = origin
-      headers['Access-Control-Allow-Methods'] = 'GET, PUT, OPTIONS'
+      headers['Access-Control-Allow-Methods'] = 'GET, PUT, POST, OPTIONS'
       headers['Access-Control-Allow-Headers'] = 'Content-Type'
     }
-    const send = (status, body) => {
+    const send = (status, body, extra = {}) => {
       const payload = JSON.stringify(body)
-      res.writeHead(status, { ...headers, 'Content-Length': Buffer.byteLength(payload) })
+      res.writeHead(status, { ...headers, ...extra, 'Content-Length': Buffer.byteLength(payload) })
       res.end(payload)
     }
 
@@ -183,6 +193,25 @@ export function createOverlayApi({ getWorld, descriptor, steering = null, rooms 
         // U35: the Worker's spend object as read (60-s cache per window); include_test=1 keeps the zztest-% rows in, as the Worker does
         if (!spend) return send(404, { error: 'No spend on this adapter' })
         return send(200, await spend.read({ window: url.searchParams.get('window') ?? undefined, includeTest: url.searchParams.get('include_test') === '1' }))
+      }
+
+      if (url.pathname === '/ask') {
+        // U16: the PA. A local Origin was required above (a POST is a state change to this listener); then, in order and
+        // before the body is read: the method, the `ask` capability (Owner), a JSON body of at most 8 KB. Then the
+        // forwarder (compass/ask.mjs) checks the body the way the Worker will, asks, and cuts the answer to the contract.
+        if (req.method !== 'POST') return send(405, { error: 'Method not allowed: POST a question' }, { Allow: 'POST' })
+        if (!mayAsk(viewerOf(req))) return send(403, { error: 'The PA answers the Owner only' })
+        if (!ask) return send(404, { error: 'No PA on this adapter' })
+        if (!/^application\/json\b/i.test(String(req.headers['content-type'] || ''))) return send(415, { error: 'Content-Type must be application/json' })
+        if (Number(req.headers['content-length'] || 0) > ASK_BODY_LIMIT) return send(413, { error: `body exceeds ${ASK_BODY_LIMIT} bytes` }, { Connection: 'close' })
+        let body
+        try {
+          body = await readJsonBody(req, ASK_BODY_LIMIT)
+        } catch (err) {
+          return err?.code === 'too_large' ? send(413, { error: `body exceeds ${ASK_BODY_LIMIT} bytes` }, { Connection: 'close' }) : send(400, { error: 'body must be JSON: {"question": "…", "context": {…}}' })
+        }
+        const out = await ask.ask(body)
+        return send(out.status, out.body, out.headers || {})
       }
 
       const m = url.pathname.match(/^\/planets\/([^/]+)\/state$/)

@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tellefsen.om/agent-world/spec/ask.v1.json",
+  "title": "Compass POST /ask — the PA's answer, as the sidecar's POST /ask passes it to the panel (v1)",
+  "description": "U16W (tellefsen-compass-mcp, branch compass-ask, docs/ask.md): the PA answers a question about a run, a town, a client or a milestone from the substrate; every ask is a governed run of its own on the Worker (ES-4.6). The top level is the 200 body; $defs.error is every other status's body. The sidecar (server/harnesses/compass/ask.mjs) keeps these keys and nothing else, so additionalProperties is false: a key the Worker adds stays on the Worker until this schema names it. By place, never by person: no key here is a person.",
+  "type": "object",
+  "required": [
+    "answer",
+    "based_on",
+    "run_id",
+    "model",
+    "provider",
+    "usage",
+    "tokens_in",
+    "tokens_out",
+    "truncated",
+    "ledger"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "answer": {
+      "type": "string",
+      "description": "The answer, ending with a 'Based on' line the Worker writes from what it read — or, on a refusal, the plain Annex III refusal text."
+    },
+    "based_on": {
+      "type": "array",
+      "description": "What the answer rests on, as data. read false means named, not read (with a note).",
+      "items": {
+        "type": "object",
+        "required": ["ref", "label", "read"],
+        "additionalProperties": false,
+        "properties": {
+          "ref": { "type": "string", "description": "A machine reference, e.g. ops_config:WORLD_COMPANIES" },
+          "label": { "type": "string", "description": "What a person reads in the Based on line" },
+          "read": { "type": "boolean" },
+          "rows": { "type": "integer", "minimum": 0 },
+          "version": { "type": ["string", "null"] },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "run_id": {
+      "type": ["string", "null"],
+      "description": "The ask's own governed run (skill agent-world-pa, or zztest-agent-world-pa about a test place) — not the run asked about."
+    },
+    "model": { "type": ["string", "null"], "description": "The id the vendor says served the call; null when no model was called (a refusal by the question check)." },
+    "provider": { "type": ["string", "null"], "pattern": "^(anthropic|openai|azure_openai)$", "description": "The vendor that served the call (a pattern, not an enum: the fork names no model vendor as a quoted string \u2014 invariants.test.mjs); null when no model was called." },
+    "usage": {
+      "type": ["object", "null"],
+      "description": "The vendor's count in the firm's shape (input_tokens excludes the cache); null when none was reported or no model was called.",
+      "required": ["input_tokens", "output_tokens"],
+      "additionalProperties": false,
+      "properties": {
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 },
+        "cache_creation_input_tokens": { "type": "integer", "minimum": 0 },
+        "cache_read_input_tokens": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "tokens_in": { "type": ["integer", "null"], "minimum": 0, "description": "input + cache writes + cache reads (U16W's name)" },
+    "tokens_out": { "type": ["integer", "null"], "minimum": 0 },
+    "truncated": { "type": "boolean", "description": "The substrate was cut to fit, or the answer hit the output limit." },
+    "ledger": {
+      "type": ["object", "null"],
+      "description": "Whether the ask's run was recorded. A 200 with run_completed false is still an answer.",
+      "required": ["run_started", "row"],
+      "additionalProperties": false,
+      "properties": {
+        "run_started": { "type": "boolean" },
+        "run_completed": { "type": "boolean" },
+        "run_failed": { "type": "boolean" },
+        "row": { "type": ["string", "null"] }
+      }
+    },
+    "refused": { "type": "boolean", "enum": [true], "description": "Annex III: refused by the question check, the model, or the answer check." },
+    "reason": { "type": "string", "enum": ["annex_iii"] },
+    "withheld": { "type": "boolean", "enum": [true], "description": "The answer check withheld the model's text; answer is the plain refusal." }
+  },
+  "$defs": {
+    "error": {
+      "type": "object",
+      "description": "Every status but 200: the Worker's {error, detail?} — 400 a sentence naming the field · 401 unauthorized · 405 method not allowed · 413 body exceeds 8192 bytes · 429 ask_budget_exceeded (retry_after from the Retry-After header) · 502 budget_unavailable / ledger_unavailable / substrate_unavailable / provider_failed / provider_timeout · 503 ask_not_configured — or the sidecar's own: 403 (not Owner), 409 ask_in_flight, 415, 502 worker_unreachable / bad_answer, 503 world_not_configured, 504 worker_timeout. An error with no code of its own reads http_<status>.",
+      "required": ["error"],
+      "additionalProperties": false,
+      "properties": {
+        "error": { "type": "string", "pattern": "\\S" },
+        "detail": { "type": "string" },
+        "run_id": { "type": "string" },
+        "provider": { "type": "string" },
+        "model": { "type": "string" },
+        "retry_after": { "type": "integer", "minimum": 0 },
+        "asks_today": { "type": "integer", "minimum": 0 },
+        "tokens_today": { "type": "integer", "minimum": 0 },
+        "limit": { "type": "integer", "minimum": 0 },
+        "token_limit": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

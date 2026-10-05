@@ -1,0 +1,290 @@
+// Agent World — U16W wiring (adapter side; ES-4.6; docs/adr/0008): the browser asks the sidecar's POST /ask, the
+// sidecar forwards to the Worker's POST /ask with the bearer. A stand-in Worker on loopback answers here — never the
+// real Compass, never a model.
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import http from 'node:http'
+import fs from 'node:fs'
+import path from 'node:path'
+
+const root = path.resolve(new URL('..', import.meta.url).pathname)
+const { createAsk, parseQuestion, retryAfterOf, MAX_QUESTION_CHARS } = await import(path.join(root, 'server/harnesses/compass/ask.mjs'))
+const { loadConfig } = await import(path.join(root, 'server/harnesses/compass/config.mjs'))
+const { createOverlayApi, startOverlayApi, mayAsk } = await import(path.join(root, 'server/harnesses/compass/overlay-api.mjs'))
+const { makeViewer, PRESETS } = await import(path.join(root, 'server/harnesses/compass/viewer.mjs'))
+const { validate } = await import('./lib/validate.mjs')
+const schema = JSON.parse(fs.readFileSync(path.join(root, 'spec/ask.v1.json'), 'utf8'))
+const cases = JSON.parse(fs.readFileSync(path.join(root, 'test/fixtures/ask.synthetic.json'), 'utf8'))
+
+const ALPHA = 'a1a1a1a1-0000-4000-8000-000000000001'
+const QUESTION = 'ZZTEST-QUESTION-7f3a: what is this run waiting on?'
+const SECRET_ANSWER = cases.answer.body.answer
+const origin = 'http://127.0.0.1:5274'
+
+/** A stand-in for the Worker's POST /ask: records what reached it, answers what the test says. */
+async function standIn(reply = () => ({ status: 200, body: cases.answer.body })) {
+  const seen = []
+  const server = http.createServer((req, res) => {
+    let s = ''
+    req.on('data', (c) => (s += c))
+    req.on('end', async () => {
+      seen.push({ method: req.method, url: req.url, authorization: req.headers.authorization, type: req.headers['content-type'], body: s ? JSON.parse(s) : null })
+      const r = await reply(seen.at(-1))
+      if (r.hang) return // never answers
+      const headers = { 'Content-Type': r.raw ? 'text/html' : 'application/json', ...(r.headers || {}) }
+      res.writeHead(r.status, headers)
+      res.end(r.raw ?? JSON.stringify(r.body))
+    })
+  })
+  await new Promise((r) => server.listen(0, '127.0.0.1', r))
+  const url = `http://127.0.0.1:${server.address().port}`
+  return { seen, url, close: () => new Promise((r) => { server.closeAllConnections?.(); server.close(r) }) }
+}
+
+const cfgFor = (workerUrl, env = {}) => loadConfig({ EVENTS_URL: `${workerUrl}/events`, EVENTS_BEARER_TOKEN: 'zztest-events-bearer', ...env })
+
+test('U16W: config derives the /ask URL from EVENTS_URL like the reads, prefers WORLD_ASK_BEARER, and waits longer than the Worker\'s 25 s model deadline', () => {
+  const cfg = loadConfig({ EVENTS_URL: 'https://w.example/events', EVENTS_BEARER_TOKEN: 'ev' })
+  assert.equal(cfg.askUrl, 'https://w.example/ask')
+  assert.equal(cfg.askBearerToken, 'ev', 'the events bearer stands in without WORLD_ASK_BEARER')
+  assert.equal(loadConfig({ EVENTS_URL: 'https://w.example/events', EVENTS_BEARER_TOKEN: 'ev', WORLD_ASK_BEARER: ' ask ' }).askBearerToken, 'ask')
+  assert.ok(cfg.askTimeoutMs > 25_000, 'the Worker\'s provider_timeout (25 s) arrives before this side gives up')
+  assert.equal(cfg.askTimeoutMs, 40_000)
+  assert.equal(loadConfig({ EVENTS_URL: 'https://w.example/hooks', EVENTS_BEARER_TOKEN: 'ev' }).askUrl, '', 'no /events tail, no /ask URL')
+  assert.equal(loadConfig({}).askUrl, '')
+})
+
+test('U16W: the body is checked as the Worker checks it — the question, its bounds, the six context keys, a uuid run_id, places without quotes; zone is sent as town', () => {
+  const ok = parseQuestion({ question: '  what is waiting?\n\tthanks  ', context: { run_id: ALPHA.toUpperCase(), zone: 'ZZTEST Client', milestone: 'ZZTEST milestone', project: 'ZZTEST project' } })
+  assert.deepEqual(ok, { question: 'what is waiting?\n\tthanks', context: { run_id: ALPHA, town: 'ZZTEST Client', milestone: 'ZZTEST milestone', project: 'ZZTEST project' } })
+  assert.deepEqual(parseQuestion({ question: 'q' }), { question: 'q', context: {} })
+  for (const [body, why] of [
+    [{}, /question is required/],
+    [null, /question is required/],
+    [[], /question is required/],
+    [{ question: '   ' }, /question is required/],
+    [{ question: 'x'.repeat(MAX_QUESTION_CHARS + 1) }, /exceeds 1000/],
+    [{ question: 'bell\u0007' }, /control characters/],
+    [{ question: 'q', actor: 'someone' }, /unknown field "actor"/],
+    [{ question: 'q', context: { actor: 'someone' } }, /unknown context field "actor"/],
+    [{ question: 'q', context: { person: 'someone' } }, /unknown context field "person"/],
+    [{ question: 'q', context: 'ZZTEST Client' }, /context must be an object/],
+    [{ question: 'q', context: { run_id: 'not-a-uuid' } }, /run_id must be a uuid/],
+    [{ question: 'q', context: { town: 'ZZTEST "Client"' } }, /quotes/],
+    [{ question: 'q', context: { client: 'a\\b' } }, /quotes, backslashes/],
+    [{ question: 'q', context: { town: 'x'.repeat(201) } }, /exceeds 200/],
+    [{ question: 'q', context: { town: 'ZZTEST Client', zone: 'ZZTEST Client 2' } }, /disagree/],
+    [{ question: 'q', context: { project: 7 } }, /must be a string/],
+  ]) assert.match(parseQuestion(body).error || '', why, JSON.stringify(body)?.slice(0, 60))
+  assert.equal(parseQuestion({ question: 'x'.repeat(MAX_QUESTION_CHARS) }).error, undefined, '1000 characters is allowed')
+})
+
+test('U16W: Retry-After reads as whole seconds, from a number or an HTTP date', () => {
+  assert.equal(retryAfterOf('15120'), 15120)
+  assert.equal(retryAfterOf(new Date(1_000_000 + 90_500).toUTCString(), 1_000_000), 90)
+  assert.equal(retryAfterOf('soon'), null)
+  assert.equal(retryAfterOf(undefined), null)
+})
+
+test('U16W: the forwarder POSTs {question, context} to the Worker\'s /ask with the bearer, and passes the answer back cut to spec/ask.v1.json', async () => {
+  const worker = await standIn(() => ({ status: 200, body: { ...cases.answer.body, actor: 'someone', debug: { prompt: 'never forwarded' } } }))
+  try {
+    const out = await createAsk(cfgFor(worker.url)).ask({ question: QUESTION, context: { run_id: ALPHA, zone: 'ZZTEST Client' } })
+    assert.equal(out.status, 200)
+    assert.deepEqual(out.body, cases.answer.body, 'the stray keys stay on the Worker')
+    assert.deepEqual(validate(schema, out.body), [])
+    assert.equal(worker.seen.length, 1)
+    const got = worker.seen[0]
+    assert.equal(got.method, 'POST')
+    assert.equal(got.url, '/ask')
+    assert.equal(got.authorization, 'Bearer zztest-events-bearer')
+    assert.match(got.type, /^application\/json/)
+    assert.deepEqual(got.body, { question: QUESTION, context: { run_id: ALPHA, town: 'ZZTEST Client' } })
+  } finally {
+    await worker.close()
+  }
+  // WORLD_ASK_BEARER, when set, is the bearer that goes
+  const second = await standIn()
+  try {
+    await createAsk(cfgFor(second.url, { WORLD_ASK_BEARER: 'zztest-ask-bearer' })).ask({ question: 'q' })
+    assert.equal(second.seen[0].authorization, 'Bearer zztest-ask-bearer')
+  } finally {
+    await second.close()
+  }
+})
+
+test('U16W: the Worker\'s errors come back with its status and a contract body — 429 with its wait, 503 off, 502 provider and substrate failures, 401, 404, an HTML error page', async () => {
+  const replies = {
+    budget: { status: 429, body: cases.budget.body, headers: { 'Retry-After': '15120' } },
+    off: { status: 503, body: cases.not_configured.body },
+    provider: { status: 502, body: cases.provider_failed.body },
+    timeout: { status: 502, body: cases.provider_timeout.body },
+    substrate: { status: 502, body: cases.substrate_unavailable.body },
+    ledger: { status: 502, body: cases.ledger_unavailable.body },
+    unauth: { status: 401, body: cases.unauthorized.body },
+    missing: { status: 404, body: { error: 'not found' } },
+    html: { status: 520, raw: '<html>cloudflare</html>' },
+    empty200: { status: 200, body: { based_on: [] } },
+  }
+  let next = 'budget'
+  const worker = await standIn(() => replies[next])
+  const ask = createAsk(cfgFor(worker.url))
+  try {
+    const run = async (name) => ((next = name), ask.ask({ question: QUESTION }))
+    const b = await run('budget')
+    assert.equal(b.status, 429)
+    assert.equal(b.body.error, 'ask_budget_exceeded')
+    assert.equal(b.body.retry_after, 15120)
+    assert.equal(b.headers['Retry-After'], '15120')
+    assert.equal(b.body.limit, 200)
+    assert.deepEqual(await run('off').then((r) => [r.status, r.body.error, r.body.detail]), [503, 'ask_not_configured', 'ASK_PROVIDER is not set on the Worker'])
+    const p = await run('provider')
+    assert.deepEqual([p.status, p.body.error, p.body.run_id, p.body.provider], [502, 'provider_failed', cases.provider_failed.body.run_id, 'anthropic'])
+    assert.ok(!('ledger' in p.body), 'cut to the contract')
+    assert.deepEqual(await run('timeout').then((r) => [r.status, r.body.error]), [502, 'provider_timeout'])
+    assert.deepEqual(await run('substrate').then((r) => [r.status, r.body.error]), [502, 'substrate_unavailable'])
+    assert.deepEqual(await run('ledger').then((r) => [r.status, r.body.error]), [502, 'ledger_unavailable'])
+    assert.deepEqual(await run('unauth').then((r) => [r.status, r.body]), [401, { error: 'unauthorized' }])
+    assert.deepEqual(await run('missing').then((r) => [r.status, r.body.error]), [404, 'not found'])
+    assert.deepEqual(await run('html').then((r) => [r.status, r.body]), [520, { error: 'http_520' }])
+    assert.deepEqual(await run('empty200').then((r) => [r.status, r.body.error]), [502, 'bad_answer'], 'a 200 that is not an answer is not shown as one')
+    for (const r of Object.keys(replies)) if (r !== 'empty200') assert.deepEqual(validate(schema.$defs.error, (await run(r)).body), [], r)
+  } finally {
+    await worker.close()
+  }
+})
+
+test('U16W: the sidecar\'s own answers — a bad body is never sent, nothing configured is 503, a hanging Worker is 504 at the deadline, a dead one 502, and one question at a time', async () => {
+  const worker = await standIn(() => ({ hang: true }))
+  try {
+    const cfg = { ...cfgFor(worker.url), askTimeoutMs: 150 }
+    const ask = createAsk(cfg)
+    assert.deepEqual(await ask.ask({}).then((r) => [r.status, /question is required/.test(r.body.error)]), [400, true])
+    assert.equal(worker.seen.length, 0, 'a body the Worker would refuse never leaves the machine')
+    const first = ask.ask({ question: 'q1' })
+    await new Promise((r) => setTimeout(r, 20))
+    assert.deepEqual(await ask.ask({ question: 'q2' }).then((r) => [r.status, r.body.error]), [409, 'ask_in_flight'])
+    const slow = await first
+    assert.deepEqual([slow.status, slow.body.error], [504, 'worker_timeout'])
+    assert.match(slow.body.detail, /did not answer within/)
+    assert.equal(ask.inFlight(), false, 'the slot is free again after the deadline')
+    assert.equal(worker.seen.length, 1, 'the refused second question never reached the Worker')
+  } finally {
+    await worker.close()
+  }
+  for (const env of [{ EVENTS_URL: '' }, { EVENTS_BEARER_TOKEN: '' }, { EVENTS_URL: 'http://127.0.0.1:9/hooks' }]) {
+    let called = 0
+    const ask = createAsk(loadConfig({ EVENTS_URL: 'http://127.0.0.1:9/events', EVENTS_BEARER_TOKEN: 'b', ...env }), { fetchImpl: async () => (called++, { ok: true, status: 200, json: async () => ({}) }) })
+    assert.deepEqual(await ask.ask({ question: 'q' }).then((r) => [r.status, r.body.error]), [503, 'world_not_configured'], JSON.stringify(env))
+    assert.equal(called, 0)
+  }
+  const dead = createAsk(loadConfig({ EVENTS_URL: 'http://127.0.0.1:9/events', EVENTS_BEARER_TOKEN: 'b' }), { fetchImpl: async () => { throw new TypeError('fetch failed') } })
+  assert.deepEqual(await dead.ask({ question: 'q' }).then((r) => [r.status, r.body.error]), [502, 'worker_unreachable'])
+})
+
+/** The sidecar in front of a forwarder that points at a stand-in Worker. */
+async function sidecarWith(worker, viewerFor, logs) {
+  const ask = createAsk(cfgFor(worker.url), { log: (line) => logs?.push(String(line)) })
+  const world = { planets: [{ key: 'zz', home: true }], towns: [], campus: { name: 'ZZTEST HQ' } }
+  const api = await startOverlayApi(createOverlayApi({ getWorld: async () => world, descriptor: async () => world, ask, viewerFor, log: (...a) => logs?.push(a.join(' ')) }), { port: 0 })
+  return { api, base: `http://127.0.0.1:${api.port}` }
+}
+const post = (base, body, headers = {}) =>
+  fetch(`${base}/ask`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin, ...headers }, body: typeof body === 'string' ? body : JSON.stringify(body) })
+
+test('U16W: the sidecar\'s POST /ask — Owner with a local Origin gets the Worker\'s answer; the browser never sees the bearer; the question and the answer are never logged', async () => {
+  const worker = await standIn()
+  const logs = []
+  const consoleLines = []
+  const saved = { log: console.log, warn: console.warn, error: console.error, info: console.info }
+  for (const k of Object.keys(saved)) console[k] = (...a) => consoleLines.push(a.map(String).join(' '))
+  const s = await sidecarWith(worker, () => makeViewer({ preset: 'owner' }), logs)
+  try {
+    const res = await post(s.base, { question: QUESTION, context: { run_id: ALPHA, town: 'ZZTEST Client' } })
+    assert.equal(res.status, 200)
+    assert.equal(res.headers.get('access-control-allow-origin'), origin)
+    const text = await res.text()
+    assert.deepEqual(JSON.parse(text), cases.answer.body)
+    assert.ok(!/zztest-events-bearer|authorization|bearer/i.test(text + JSON.stringify([...res.headers])), 'no bearer reaches the page')
+    assert.equal(worker.seen[0].authorization, 'Bearer zztest-events-bearer', 'the bearer is the sidecar\'s to send')
+    // the preflight a page makes before a JSON POST
+    const pre = await fetch(`${s.base}/ask`, { method: 'OPTIONS', headers: { Origin: origin, 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'content-type' } })
+    assert.equal(pre.status, 204)
+    assert.match(pre.headers.get('access-control-allow-methods'), /POST/)
+    const everything = [...logs, ...consoleLines].join('\n')
+    assert.ok(logs.some((l) => /^ask: 200 answered/.test(l)), 'the ask is logged by its status')
+    assert.ok(!everything.includes('ZZTEST-QUESTION-7f3a'), 'the question is never logged')
+    assert.ok(!everything.includes(SECRET_ANSWER.slice(0, 40)), 'the answer is never logged')
+  } finally {
+    Object.assign(console, saved)
+    await s.api.close()
+    await worker.close()
+  }
+})
+
+test('U16W: the sidecar\'s POST /ask refuses before the Worker is asked — no Origin, a foreign Origin, every preset but Owner, no viewer, GET, a body that is not JSON, over 8 KB', async () => {
+  const worker = await standIn()
+  try {
+    const owner = await sidecarWith(worker, () => makeViewer({ preset: 'owner' }))
+    try {
+      assert.equal((await post(owner.base, { question: 'q' }, { Origin: '' })).status, 403, 'no Origin')
+      assert.equal((await post(owner.base, { question: 'q' }, { Origin: 'https://evil.example' })).status, 403, 'a foreign Origin')
+      const get = await fetch(`${owner.base}/ask`)
+      assert.deepEqual([get.status, get.headers.get('allow')], [405, 'POST'])
+      assert.equal((await post(owner.base, { question: 'q' }, { 'Content-Type': 'text/plain' })).status, 415, 'a simple (non-preflighted) POST is refused')
+      assert.deepEqual(await post(owner.base, '{"question":').then(async (r) => [r.status, (await r.json()).error]), [400, 'body must be JSON: {"question": "…", "context": {…}}'])
+      assert.equal((await post(owner.base, { question: 'q', context: { town: 'x'.repeat(9000) } })).status, 413, 'over 8 KB')
+      assert.deepEqual(await post(owner.base, {}).then(async (r) => [r.status, /question is required/.test((await r.json()).error)]), [400, true], 'an empty body is the sidecar\'s 400 — it does not reach the Worker')
+      assert.equal(worker.seen.length, 0, 'none of these reached the Worker')
+    } finally {
+      await owner.api.close()
+    }
+    for (const preset of Object.keys(PRESETS).filter((p) => p !== 'owner')) {
+      const other = await sidecarWith(worker, () => makeViewer({ preset }))
+      try {
+        const res = await post(other.base, { question: QUESTION })
+        assert.equal(res.status, 403, preset)
+        assert.deepEqual(await res.json(), { error: 'The PA answers the Owner only' })
+      } finally {
+        await other.api.close()
+      }
+    }
+    for (const viewerFor of [() => null, () => ({ preset: 'owner' }), () => { throw new Error('no identity') }]) {
+      const s = await sidecarWith(worker, viewerFor)
+      try {
+        assert.equal((await post(s.base, { question: QUESTION })).status, 403, 'fails closed — a preset name alone is not the capability')
+      } finally {
+        await s.api.close()
+      }
+    }
+    assert.equal(worker.seen.length, 0, 'a refused viewer never causes a Worker call')
+  } finally {
+    await worker.close()
+  }
+})
+
+test('U16W: the sidecar passes the budget\'s 429 through with Retry-After and the wait in the body', async () => {
+  const worker = await standIn(() => ({ status: 429, body: cases.budget.body, headers: { 'Retry-After': '15120' } }))
+  const s = await sidecarWith(worker, () => makeViewer({ preset: 'owner' }))
+  try {
+    const res = await post(s.base, { question: QUESTION })
+    assert.equal(res.status, 429)
+    assert.equal(res.headers.get('retry-after'), '15120')
+    const body = await res.json()
+    assert.equal(body.retry_after, 15120)
+    assert.deepEqual(validate(schema.$defs.error, body), [])
+  } finally {
+    await s.api.close()
+    await worker.close()
+  }
+})
+
+test('U16W: only the Owner preset holds `ask`; mayAsk reads the capability, never the preset\'s name', () => {
+  const holders = Object.entries(PRESETS).filter(([, p]) => p.capabilities.includes('ask')).map(([name]) => name)
+  assert.deepEqual(holders, ['owner'])
+  assert.equal(mayAsk(makeViewer({ preset: 'owner' })), true)
+  assert.equal(mayAsk({ preset: 'owner' }), false)
+  assert.equal(mayAsk({ capabilities: ['view', 'ask'] }), true)
+  assert.equal(mayAsk(null), false)
+  for (const f of ['server/harnesses/compass/ask.mjs', 'spec/ask.v1.json']) assert.ok(!/\bactor\b/i.test(fs.readFileSync(path.join(root, f), 'utf8')), `${f} names no person-shaped field`)
+})

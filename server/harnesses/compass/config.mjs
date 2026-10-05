@@ -32,6 +32,17 @@ export function loadConfig(env = process.env) {
      */
     streamUrl: /\/events$/.test(eventsUrl) ? eventsUrl.replace(/\/events$/, '/events/stream') : '',
     streamEnabled: !/^(0|off|false|no)$/i.test(String(env.WORLD_STREAM ?? '').trim()),
+    /**
+     * U16W: the PA — POST /ask on the Worker (ES-4.6), the one Worker route the adapter asks rather than reads. Only the
+     * sidecar's POST /ask uses it (compass/ask.mjs): the browser never holds the bearer (docs/adr/0008). Derived only
+     * from an EVENTS_URL that ends in /events, like the stream. The Worker takes ASK_BEARER when it has one, else the
+     * events bearer; WORLD_ASK_BEARER is this machine's copy of the first, and the events bearer stands in without it.
+     * The deadline sits above the Worker's own 25 s on the model call, so the Worker's 502 provider_timeout arrives
+     * before this side gives up.
+     */
+    askUrl: /\/events$/.test(eventsUrl) ? eventsUrl.replace(/\/events$/, '/ask') : '',
+    askBearerToken: String(env.WORLD_ASK_BEARER || '').trim() || env.EVENTS_BEARER_TOKEN || '',
+    askTimeoutMs: num(env.WORLD_ASK_TIMEOUT_MS, 40_000),
     spendCacheMs: 60_000,
     spendWindowDays: 30,
     /** The overlay sidecar's loopback port (overlay-api.mjs); 0 disables it (home planet only). */
