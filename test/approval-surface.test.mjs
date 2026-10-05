@@ -424,3 +424,21 @@ test('approval (confirmation 4): on a run with several gates, the title, the pan
     assert.ok(panel.instruction.startsWith(PA_LINE))
   }
 })
+
+test('approval (pin): the Context link is the chosen gate\'s page too — a chat run with an older session gate and a newer Pending Approval row', async () => {
+  const PAGE = 'https://app.notion.com/p/zztest-session-page'
+  const AIRTABLE = 'https://airtable.com/appZZ/tblZZ/recZZ'
+  const PROJECT = 'https://claude.ai/project/zztest'
+  const chat = { trigger: 'chat' }
+  const runs = fold([
+    ev('e1', 'run_started', {}, chat),
+    ev('e2', 'gate_waiting', { surface: 'class_b_gate', gate: 'ZZTEST question', ref_url: PAGE }, { ...chat, at: '2026-10-06T07:00:00Z' }),
+    ev('e3', 'gate_waiting', { surface: 'pending_approval', gate: 'ZZTEST gate', ref_url: AIRTABLE }, { ...chat, at: '2026-10-06T07:30:00Z' }),
+  ])
+  const t = await toThread(runs.get(RUN), null, makeViewer({ preset: 'owner' }), surfaces, NOW, { claudeProjectUrl: PROJECT, consoleProposalsUrl: `${WORKER}/console/proposals` })
+  // the oldest gate the Owner can tap is the session's: Open goes to the chat, and its page rides along as Context
+  assert.equal(t.gitBranch, 'answer in the chat')
+  assert.equal(t.ref.url, PROJECT, 'a session gate on a chat run opens the chat')
+  assert.equal(t.ref.context, PAGE, "the Context link is the same gate's page — never the newer row's")
+  assert.ok(!JSON.stringify(t.ref).includes(AIRTABLE))
+})
