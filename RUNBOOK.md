@@ -126,7 +126,8 @@ scripts/capture-contract.sh --cost-only
 ```
 
 Until then that command says "is Compass U5 deployed?" and writes nothing. It replaces every town name except the
-ZZTEST ones with `town-1`, `town-2` …, and it warns if Compass sent something it does not recognise. Then:
+ZZTEST ones with `town-1`, `town-2` … If Compass sends a field the contract does not know, it writes nothing and
+names where the field was. Ask someone who changes code to teach it the new field. Then:
 
 ```
 npm test

@@ -6,9 +6,10 @@
 #   --spend-only       GET /world/spend?window=30 alone (U35W)
 #   --cost-only        GET /ledger/cost?days=1&include_test=1 alone (Compass U5, U37) → test/fixtures/ledger-cost.live.json.
 #                      Run it once U5 is deployed; until then the contract test validates the synthetic answer only.
-#                      Only strings under keys known to be safe (at, since, pricing_version, town_source, day) are kept;
-#                      every town but ZZTEST… and "internal" becomes town-1, town-2 … in by_town and by_town_day alike,
-#                      any other string redacted-n, and an unknown key is renamed and reported (the repo is public).
+#                      Kept by path and shape against the contract: every town but ZZTEST… and "internal" becomes
+#                      town-1, town-2 … in by_town and by_town_day alike; a value of the wrong shape at a known path is
+#                      redacted and said; a key the contract has not got, at any depth, refuses the capture (nothing is
+#                      written) and names the path. Values are never printed (the repo is public).
 # CAPTURE_DIR overrides where the files go (default test/fixtures). CAPTURE_SKIP_DOTENV=1 leaves .env unread — the
 # tests use both, with a local stand-in for the Worker; nothing here is ever pointed at the real Worker by a test.
 set -euo pipefail
@@ -28,27 +29,57 @@ if [ "$ONLY" = "--cost-only" ]; then
   BODY=$(curl -sf -H "Authorization: Bearer $EVENTS_BEARER_TOKEN" "$W/ledger/cost?days=1&include_test=1") \
     || { echo "GET /ledger/cost did not answer 200 — is Compass U5 deployed? Nothing written." >&2; exit 1; }
   printf '%s' "$BODY" | node -e '
-// Allow-list, not a name hunt: a string survives only under a key known to carry no place or person (times, the day,
-// the pricing version, the town_source enum). Every other string is replaced — a town by town-n (the same stand-in
-// wherever it appears, by_town and by_town_day alike), anything else by redacted-n; ZZTEST… and "internal" are kept.
-// A key the contract does not name is renamed (it may itself be a name) and reported: the answer has changed.
-const SAFE_STRINGS=new Set(["at","since","pricing_version","town_source","day"])
-const KNOWN_KEYS=new Set(["at","days","since","pricing_version","town_source","excluded_test_runs","totals","by_town","by_town_day","day","town","runs_total","runs_metered","runs_unmetered","runs_unpriced","tokens_in","tokens_out","tokens_unpriced","cost_usd","methods","breakdown","flat"])
-const names=new Map();const count={town:0,redacted:0};let unknown=0
-const stand=(s,kind)=>{if(/^zztest/i.test(s)||s==="internal")return s;if(!names.has(s))names.set(s,`${kind}-${++count[kind]}`);return names.get(s)}
-const clean=(v,key)=>{
-  if(Array.isArray(v))return v.map(x=>clean(x,key))
-  if(v&&typeof v==="object"){const o={};for(const [k,x] of Object.entries(v)){const known=KNOWN_KEYS.has(k);if(!known)unknown++;o[known?k:`unknown-key-${unknown}`]=clean(x,known?k:"")}return o}
-  if(typeof v==="string")return SAFE_STRINGS.has(key)?v:stand(v,key==="town"?"town":"redacted")
-  return v
+// By path and shape, not by key name: the answer is walked against the contract (spec/ledger-cost.v1.json), and a value
+// is kept only at its known path and in its expected shape. at / since: ISO times. by_town_day[].day: YYYY-MM-DD.
+// town_source: town | client. pricing_version: the version and its date, the free text after them dropped. The counters:
+// numbers. A town (by_town[].town, by_town_day[].town): town-n, the same stand-in in both lists; ZZTEST… and internal
+// kept. A value of the wrong shape at a known path is redacted and said. A key the contract has not got, at any depth,
+// is redacted with everything under it, and the file is not written at all: the answer has changed, and a person
+// decides. Paths are printed, values never.
+const ISO=/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/
+const N="number"
+const COUNTERS={runs_total:N,runs_metered:N,runs_unmetered:N,runs_unpriced:N,tokens_in:N,tokens_out:N,tokens_unpriced:N,cost_usd:N,methods:{breakdown:N,flat:N}}
+const SHAPE={at:"iso",days:N,since:"iso",pricing_version:"version",town_source:"source",excluded_test_runs:N,totals:COUNTERS,by_town:[{town:"town",...COUNTERS}],by_town_day:[{day:"day",town:"town",...COUNTERS}]}
+const names=new Map();const unknown=[];const redacted=[];const trimmed=[]
+const town=(s)=>{if(/^zztest/i.test(s)||s==="internal")return s;if(!names.has(s))names.set(s,`town-${names.size+1}`);return names.get(s)}
+const plain=(v)=>v!==null&&typeof v==="object"&&!Array.isArray(v)
+const redact=(path)=>(redacted.push(path),"redacted")
+function walk(v,shape,path){
+  if(Array.isArray(shape))return Array.isArray(v)?v.map((x,i)=>walk(x,shape[0],`${path}[${i}]`)):redact(path)
+  if(plain(shape)){
+    if(!plain(v))return redact(path)
+    const out={};let n=0
+    for(const [k,x] of Object.entries(v)){
+      if(Object.hasOwn(shape,k))out[k]=walk(x,shape[k],`${path}.${k}`)
+      else{unknown.push(`${path}.${k}`);out[`unknown-${++n}`]="redacted"} // the subtree is not read, the key not kept
+    }
+    return out
+  }
+  if(shape===N)return v===null||typeof v==="number"?v:redact(path)
+  if(shape==="iso")return typeof v==="string"&&ISO.test(v)&&!Number.isNaN(Date.parse(v))?v:redact(path)
+  if(shape==="day")return typeof v==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(v)?v:redact(path)
+  if(shape==="source")return v==="town"||v==="client"?v:redact(path)
+  if(shape==="version"){
+    if(v===null)return null
+    const m=typeof v==="string"&&v.match(/^v?\d+(?:\.\d+){0,3}(?: · \d{4}-\d{2}-\d{2})?/)
+    if(!m)return redact(path)
+    if(m[0]!==v)trimmed.push(path)
+    return m[0]
+  }
+  if(shape==="town")return typeof v==="string"&&v.trim()?town(v):redact(path)
+  return redact(path)
 }
 let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
   const j=JSON.parse(s)
-  if(!Array.isArray(j.by_town)){console.error("GET /ledger/cost answered without by_town — not written");process.exit(1)}
-  const out={note:`GET /ledger/cost?days=1&include_test=1 captured ${process.argv[1]} for the contract test (U37, Compass U5). Every string outside at, since, pricing_version, town_source and day replaced: towns other than ZZTEST and internal by town-n, anything else by redacted-n; unknown keys renamed. Re-capture with scripts/capture-contract.sh --cost-only.`,...clean(j,"")}
+  if(!plain(j)||!Array.isArray(j.by_town)){console.error("GET /ledger/cost answered without by_town — nothing written");process.exit(1)}
+  const clean=walk(j,SHAPE,"$")
+  for(const p of unknown)console.error(`unknown key at ${p} — refused, the Worker answer has changed`)
+  if(unknown.length){console.error(`nothing written: teach scripts/capture-contract.sh and spec/ledger-cost.v1.json the new keys first (${unknown.length} unknown)`);process.exit(1)}
+  for(const p of redacted)console.error(`redacted ${p}: not the shape the contract names`)
+  for(const p of trimmed)console.error(`trimmed ${p} to its version and date`)
+  const out={note:`GET /ledger/cost?days=1&include_test=1 captured ${process.argv[1]} for the contract test (U37, Compass U5). Kept by path and shape only; towns other than ZZTEST and internal replaced by town-n. Re-capture with scripts/capture-contract.sh --cost-only.`,...clean}
   require("fs").writeFileSync(process.argv[2],JSON.stringify(out,null,1)+"\n")
-  console.log("cost captured:",j.totals?.runs_total,"runs,",j.by_town.length,"towns,",count.town,"town names replaced")
-  if(unknown)console.error(`warning: ${unknown} unknown keys renamed — the Worker answer has changed; check spec/ledger-cost.v1.json`)
+  console.log("cost captured:",clean.totals?.runs_total,"runs,",clean.by_town.length,"towns,",names.size,"town names replaced")
 })' "$STAMP" "$OUT/ledger-cost.live.json"
   exit 0
 fi
