@@ -78,4 +78,6 @@ at a time. The sidecar's own answers, beside the Worker's: 403 (not Owner, or an
 `world_not_configured` (no `/ask` URL or bearer on this machine), 504 `worker_timeout`. A log line carries the
 status, the error code and the PA's own run id — never the question, the answer or the detail. Through the sidecar,
 `{}` is the sidecar's own 400 and never reaches the Worker: the liveness probe is a curl to the Worker
-(`VERIFICATION.md` V-U16W).
+(`VERIFICATION.md` V-U16W). The backstop (ADR-0008): a 200 answer whose text or refs name someone the last ledger scan
+names as an actor (exact word or phrase) is passed on as `{answer: "Withheld: it named a person.", based_on: [],
+refused: true, reason: "named_person", withheld: true, …}` with the run, model and counts kept.

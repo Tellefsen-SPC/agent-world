@@ -27,7 +27,7 @@ Harness `id: 'compass'`, `name: 'Compass'`. `thread.id` = `run_id`. Zone (`threa
 ## Annex III
 This system never autonomously assigns work to, or evaluates/scores, a named individual. Anything that routes, ranks, or scores people writes a recommendation; a human commits. This applies to every automation, agent, workflow, and model-driven component, now and in later phases.
 
-Here that means: `actor` draws an avatar and nothing else; `human_edit_level`, tokens and model are never shown or aggregated per person; no per-person view exists on any surface.
+Here that means: `actor` draws an avatar and nothing else — except as a deny-list: the PA's backstop withholds an answer that names an actor from the ledger window (ADR-0008; 2026-10-05, to ratify); `human_edit_level`, tokens and model are never shown or aggregated per person; no per-person view exists on any surface.
 
 ## Never touch
 - `src/**`, `server/scan.mjs`, `server/api.mjs`, `server/harnesses/claude-code.mjs`.
@@ -56,4 +56,4 @@ Design detail → decide in-session, note it in `claude-progress.txt`, propose a
 Unit Built → its check passes in the verifier's hands → Verified. All M1 units Verified → M1 regression pass → M1 Done (`milestone-close`). All milestones Done → acceptance. The builder never self-declares.
 
 ---
-Changes: 2026-09-06 · v1 · written by build-kickoff v1.3. · 2026-09-08 · session rule 6 gains the usage block (U35, Prompt D from Christoffer). · 2026-10-04 · factual fixes: the repo's name and visibility (public; private is the decision, an owner action), the fork base checked by merge-base, the ZZTEST cleanup is `zztest-seed.sh --clean` (the .sql is gone); Commands names RUNBOOK.md, docs/adr/ and CI — by the developer under delegated authority, to ratify. · 2026-10-05 · rule 6's usage line: subagents' transcripts summed, one de-duplication across all of a session's files, the split / by_model / subagents keys and the 3 s deadline, aligned with the template's hooks — by the developer under delegated authority, to ratify.
+Changes: 2026-09-06 · v1 · written by build-kickoff v1.3. · 2026-09-08 · session rule 6 gains the usage block (U35, Prompt D from Christoffer). · 2026-10-04 · factual fixes: the repo's name and visibility (public; private is the decision, an owner action), the fork base checked by merge-base, the ZZTEST cleanup is `zztest-seed.sh --clean` (the .sql is gone); Commands names RUNBOOK.md, docs/adr/ and CI — by the developer under delegated authority, to ratify. · 2026-10-05 · rule 6's usage line: subagents' transcripts summed, one de-duplication across all of a session's files, the split / by_model / subagents keys and the 3 s deadline, aligned with the template's hooks — by the developer under delegated authority, to ratify. · 2026-10-05 · Annex III: `actor` may also serve as a deny-list for the PA's backstop (ADR-0008) — by the developer under delegated authority, to ratify.

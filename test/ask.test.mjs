@@ -308,7 +308,13 @@ test('U16W: only the Owner preset holds `ask`; mayAsk reads the capability, neve
   assert.equal(mayAsk({ preset: 'owner' }), false)
   assert.equal(mayAsk({ capabilities: ['view', 'ask'] }), true)
   assert.equal(mayAsk(null), false)
-  for (const f of ['server/harnesses/compass/ask.mjs', 'spec/ask.v1.json']) assert.ok(!/\bactor\b/i.test(fs.readFileSync(path.join(root, f), 'utf8')), `${f} names no person-shaped field`)
+  assert.ok(!/\bactor\b/i.test(fs.readFileSync(path.join(root, 'spec/ask.v1.json'), 'utf8')), 'the contract names no person-shaped field')
+  // ask.mjs reads actor values in one place only — the named-person backstop (review 5) — and sends none anywhere
+  const code = fs.readFileSync(path.join(root, 'server/harnesses/compass/ask.mjs'), 'utf8')
+  const start = code.indexOf('// ─── The backstop')
+  const end = code.indexOf('// ─── The forwarder')
+  assert.ok(start > 0 && end > start)
+  assert.ok(!/\bactors?\b/i.test(code.slice(0, start) + code.slice(end)), 'actor appears only inside the backstop section')
 })
 
 test('U16W (review 8): the side port waits 50 s by default and never more than 55 s — under the page\'s 60 s, so the page hears its 504', () => {
@@ -391,6 +397,45 @@ test('U16W (review 9): a body over 8 KB gets its 413 before the connection close
     assert.equal(worker.seen.length, 0, 'none of them reached the Worker')
   } finally {
     await s.api.close()
+    await worker.close()
+  }
+})
+
+test('U16 (review 5): the backstop\'s names — machine actors, skills and their steps, and places are never people; the rest are, longest first', async () => {
+  const { personNames, MACHINE_ACTORS } = await import(path.join(root, 'server/harnesses/compass/ask.mjs'))
+  const names = personNames(['zztest', 'world', 'Worker', 'claude_code', 'cowork', 'zztest-approver', 'zztest-approver:propose', 'ZZTEST Client', '  Ann Zztest  ', 'ann zztest', 'Bo', 'x', '42', 'a.b@zztest.example'], { skills: ['zztest-approver'], places: ['ZZTEST Client'] })
+  assert.deepEqual(names, ['a.b@zztest.example', 'Ann Zztest', 'Bo'])
+  for (const m of ['world', 'worker', 'claude_code', 'cowork', 'zztest']) assert.ok(MACHINE_ACTORS.includes(m), m)
+})
+
+test('U16 (review 5): an exact word or phrase only — a name inside another word, a lower-case single name, or a near-name is not a match', async () => {
+  const { namesPerson } = await import(path.join(root, 'server/harnesses/compass/ask.mjs'))
+  const names = ['a.b@zztest.example', 'Ann Zztest', 'Bo', 'will']
+  for (const t of ['Ann Zztest has the most open gates', 'ann zztest has the most open gates', 'Ann\nZztest took 9 hours', 'Bo has the most open gates.', '(Bo)', 'Bo’s gates', 'mail a.b@zztest.example', 'Will approved it']) assert.equal(namesPerson(t, names), true, t)
+  for (const t of ['Bob has gates', 'the bot ran', 'a bo-like word', 'Ann Zztester ran', 'this run will finish', 'bo has the gates', 'xa.b@zztest.example', '', undefined]) assert.equal(namesPerson(t, names), false, String(t))
+  assert.equal(namesPerson('Ann Zztest', []), false, 'no names, nothing to match')
+})
+
+test('U16 (review 5): the forwarder withholds an answer that names a person — text and refs — logs that it did without the name, and leaves refusals and clean answers alone', async () => {
+  let reply = { status: 200, body: { ...cases.answer.body, answer: 'Ann Zztest has the most open gates.' } }
+  const worker = await standIn(() => reply)
+  const logs = []
+  try {
+    const ask = createAsk(cfgFor(worker.url), { log: (l) => logs.push(l), knownNames: () => ['Ann Zztest'] })
+    const w = await ask.ask({ question: 'q' })
+    assert.deepEqual([w.status, w.body.reason, w.body.answer, w.body.based_on], [200, 'named_person', 'Withheld: it named a person.', []])
+    assert.deepEqual(validate(schema, w.body), [])
+    assert.match(logs.at(-1), /^ask: 200 withheld \(named a person\)/)
+    assert.ok(!logs.join('\n').includes('Ann'), 'the name is never logged')
+    reply = { status: 200, body: { ...cases.answer.body, based_on: [{ ref: 'x', label: 'taps by Ann Zztest', read: true }] } }
+    assert.equal((await ask.ask({ question: 'q' })).body.reason, 'named_person', 'a ref that names one counts too')
+    reply = { status: 200, body: cases.refusal_guard.body }
+    assert.equal((await ask.ask({ question: 'q' })).body.reason, 'annex_iii', 'a refusal is the Worker\'s own text, untouched')
+    reply = { status: 200, body: cases.answer.body }
+    assert.deepEqual((await ask.ask({ question: 'q' })).body, cases.answer.body)
+    const broken = createAsk(cfgFor(worker.url), { knownNames: () => { throw new Error('no scan yet') } })
+    assert.deepEqual((await broken.ask({ question: 'q' })).body, cases.answer.body, 'no names to check against: the Worker\'s own check stands')
+  } finally {
     await worker.close()
   }
 })

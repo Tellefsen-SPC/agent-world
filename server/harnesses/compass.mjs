@@ -21,7 +21,7 @@ import { makeViewer } from './compass/viewer.mjs'
 import { createSurfaces } from './compass/surfaces.mjs'
 import { createSubstrate } from './compass/substrate.mjs'
 import { createSpend } from './compass/spend.mjs'
-import { createAsk } from './compass/ask.mjs'
+import { createAsk, personNames } from './compass/ask.mjs'
 import { deriveWorld, worldDescriptor } from './compass/zones.mjs'
 import { createOverlayApi, startOverlayApi } from './compass/overlay-api.mjs'
 import { createSteering } from './compass/steering.mjs'
@@ -38,8 +38,19 @@ const viewer = makeViewer({ tenant: cfg.tenant, preset: cfg.viewerPreset })
 const surfaces = createSurfaces(cfg, { log })
 const substrate = createSubstrate(cfg, { log })
 const spend = createSpend(cfg, { log }) // U35: GET /world/spend, 60-s cache per window, served raw by the sidecar's /spend
-/** U16: the PA's question, forwarded to the Worker's POST /ask with the bearer — the browser never holds it (docs/adr/0008). */
-const ask = createAsk(cfg, { log })
+/**
+ * U16: the PA's question, forwarded to the Worker's POST /ask with the bearer — the browser never holds it (docs/adr/0008).
+ * The backstop (review 5): an answer naming someone the last ledger scan names as an actor is withheld. The names are
+ * the scan's, kept in memory with it; the page never holds one and nothing logs one.
+ */
+const ask = createAsk(cfg, {
+  log,
+  knownNames: () =>
+    personNames(lastScan?.actors || [], {
+      skills: [...(lastScan?.runs?.values?.() || [])].map((r) => r.skill),
+      places: [...(world?.towns || []).map((t) => t.name), CAMPUS, ...(world?.planets || []).map((p) => p.name)],
+    }),
+})
 const steering = createSteering(cfg, { surfaces, substrate, log }) // U19: three panels, 5-min caches, served by the sidecar
 /** What the last scan saw — the room panels (U31) and the archive (U32) read it, never the ledger again. */
 let lastScan = null
@@ -263,7 +274,9 @@ async function scan(now = Date.now()) {
     if (r.started && r.terminal == null && now - r.lastAt < cfg.runningTtlMs && !(t?.gates || []).length) live.add(r.skill)
   }
   for (const a of campusAlert(runs, now)) failed.add(a.skill) // a run_failed in 24 h with no later completion of the skill (U17's rule)
-  lastScan = { at: now, runs, rowById, threads, projects, silent: stale.map((s) => s.name), live, failed }
+  // U16 backstop: every actor value in the window — run starts, taps, everything — for the PA's named-person check only
+  const actors = [...new Set(events.map((e) => (typeof e?.actor === 'string' ? e.actor.trim() : '')).filter(Boolean))]
+  lastScan = { at: now, runs, rowById, threads, projects, silent: stale.map((s) => s.name), live, failed, actors }
 
   // Signals served with GET /world: the strip's counts (U28), the campus alert list (the ! requests stand in the
   // records office; the list feeds its panel), a ✓ per town whose project shipped a milestone (the mark is on the fixture).
@@ -346,4 +359,4 @@ const setArchived = async () => ({ ok: false, error: 'The world is a mirror; run
 export default { id: 'compass', name: 'Compass', detect, scanThreads, openThread, newSession, setArchived }
 
 /** Exposed for tests and the console — never for the browser. */
-export const _internals = { scan, cfg, viewer, world: () => world, currentWorld, signals: () => signals, steering, health, invalidate: () => (scanCache = { at: 0, threads: scanCache.threads }), startStream: () => ensureStream({ inTest: true }), stream: streamSignal }
+export const _internals = { scan, cfg, viewer, ask, lastScan: () => lastScan, world: () => world, currentWorld, signals: () => signals, steering, health, invalidate: () => (scanCache = { at: 0, threads: scanCache.threads }), startStream: () => ensureStream({ inTest: true }), stream: streamSignal }

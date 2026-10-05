@@ -39,3 +39,26 @@ holds names and numbers only (`overlay/zones.mjs`: "No token ever reaches this f
 - A liveness probe through the sidecar proves nothing about the Worker. `{}` is the sidecar's own 400, so the
   dead-route check (`{}` → 400, 404 when the route is missing) is a curl straight to the Worker (V-U16W).
 - One question at a time is per process. A second question while one is out gets a 409, not a queue.
+
+## Residual risk: Annex III (review, 2026-10-05)
+- The panel shows the Worker's answer verbatim. The Worker's own answer check misses some judgements of people by
+  design: its `docs/ask.md`, "What it still misses", names "Ann has the most open gates", "Ann took 9 hours on
+  average", names in lower case, and a judgement with no person word ("the first one is lazier"). Those can reach
+  the panel.
+- The world adds one backstop. The sidecar withholds an answer whose text or refs name someone the last ledger scan
+  names as an actor, on any event, taps included. The panel then shows **Withheld: it named a person**, with no text
+  and no refs, and keeps only the PA's run id, model and counts. Rules, `compass/ask.mjs`:
+  - exact word or phrase matches only, never part of a word;
+  - a single plain word only where it is capitalised, so an actor "will" does not withhold every "will";
+  - machine actors (`world`, `worker`, `claude_code`, `cowork`, `zztest`, …), skills and their steps, and the world's
+    places are never people.
+- The names stay on the server, in memory with the scan. The page holds no actor and nothing logs one.
+- It misses:
+  - names outside the 14-day window, or never in the ledger;
+  - a first name alone when the actor is a full name;
+  - a lower-case name;
+  - a judgement with no name at all.
+  It errs toward withholding: "Will this run finish?" is withheld when someone called Will has acted. It fails open
+  when there is no scan yet: the Worker's own check then stands alone.
+- Using actor values this way is new. CLAUDE.md said `actor` draws an avatar and nothing else. This is a protective
+  use, a deny-list that never ranks or shows anyone, and it is noted there, to ratify.

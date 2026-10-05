@@ -263,3 +263,10 @@ test('U16 (review 8): no timeout says the question stayed on this machine — on
   assert.match(pa.viewOf({ status: 0, body: { error: 'page_timeout' } }).text, /may still be running on the Worker/)
   assert.match(pa.viewOf({ status: 504, body: { error: 'worker_timeout' } }).text, /may still be running on the Worker/)
 })
+
+test('U16 (review 5): an answer the world withheld for naming a person shows "Withheld: it named a person" and no text at all', () => {
+  const v = pa.viewOf({ status: 200, body: { ...cases.answer.body, answer: 'Withheld: it named a person.', based_on: [], refused: true, reason: 'named_person', withheld: true } })
+  assert.deepEqual([v.tone, v.title, v.text, v.basedOn], ['refused', 'Withheld: it named a person', '', []])
+  assert.match(v.detail, /ledger/)
+  assert.equal(v.meta, 'run b2b2b2b2 · claude-sonnet-5 · 2,000 in · 150 out', 'the run stays, to find it on the Worker')
+})

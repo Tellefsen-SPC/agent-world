@@ -212,6 +212,77 @@ export function retryAfterOf(value, now = Date.now()) {
   return Number.isFinite(at) ? Math.max(0, Math.ceil((at - now) / 1000)) : null
 }
 
+// ─── The backstop: an answer that names a person (Annex III; review 5, 2026-10-05) ──────────
+//
+// The panel shows the Worker's answer as it comes. The Worker's own answer check misses some judgements of people by
+// design (docs/ask.md "What it still misses": "Ann has the most open gates", a lone figure with no act named, names in
+// lower case). So, as a backstop, the world withholds an answer that names someone the last ledger scan names as an
+// actor — exact word or phrase matches only — and shows "Withheld: it named a person", with no text. The names never
+// leave the server: the page holds no actor (Annex III), and nothing here logs one.
+
+/** Actors that are machines, not people: what the hooks, the Worker, the PA, the sweeps and the seed write. */
+export const MACHINE_ACTORS = Object.freeze(['world', 'worker', 'claude_code', 'claude-code', 'claude', 'cowork', 'cowork_scheduled', 'system', 'zztest', 'sweep', 'poller', 'hook', 'hooks', 'scheduler', 'cron', 'n8n', 'make', 'zapier', 'github', 'ci', 'bot', 'agent', 'unknown', 'none', 'null'])
+const LETTER = /\p{L}/u
+/**
+ * The actor values that may be people: not a machine actor, not a skill or one of its steps (`skill:step`, the
+ * approval layer's proposers), not a place the world names, at least two letters. Trimmed, de-duplicated, longest first.
+ */
+export function personNames(actors = [], { skills = [], places = [] } = {}) {
+  const lower = (v) => String(v || '').trim().toLowerCase()
+  const machine = new Set(MACHINE_ACTORS)
+  const skillSet = new Set(skills.map(lower).filter(Boolean))
+  const placeSet = new Set(places.map(lower).filter(Boolean))
+  const out = new Map()
+  for (const a of actors) {
+    const name = String(a ?? '').trim()
+    const key = name.toLowerCase()
+    if (name.length < 2 || name.length > 200 || [...name].filter((c) => LETTER.test(c)).length < 2) continue
+    if (machine.has(key) || skillSet.has(key) || placeSet.has(key) || [...skillSet].some((k) => key.startsWith(`${k}:`))) continue
+    if (!out.has(key)) out.set(key, name) // the first spelling seen; matching is by the rules below, not by case
+  }
+  return [...out.values()].sort((a, b) => b.length - a.length)
+}
+
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+/**
+ * Whether `text` names one of `names`, as a whole word or phrase: no letter, digit or underscore either side.
+ * A phrase (two words or more), an e-mail or a handle with a digit or punctuation matches in any case; a single plain
+ * word matches only where it is capitalised, as a name is in prose ("Ann" or "ANN" for actor "ann" or "Ann"; never
+ * "ann" in lower case, never "planned") — so a person called Will does not withhold every "will" in English. The
+ * price: a lower-case name is missed, as the Worker's own check misses it, and "Will this run finish?" is withheld.
+ */
+export function namesPerson(text, names = []) {
+  const t = String(text ?? '')
+  if (!t) return false
+  for (const name of names) {
+    const re = new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRe(name).replace(/\s+/g, '\\s+')}(?![\\p{L}\\p{N}_])`, 'giu')
+    const plainWord = /^\p{L}+$/u.test(name)
+    for (const m of t.matchAll(re)) {
+      if (!plainWord || /^\p{Lu}/u.test(m[0])) return true
+    }
+  }
+  return false
+}
+
+/** What the panel gets instead of an answer that named a person: the run, the model and the counts — no text, no refs. */
+export function withheldForPerson(answer) {
+  return {
+    answer: 'Withheld: it named a person.',
+    based_on: [],
+    run_id: answer.run_id,
+    model: answer.model,
+    provider: answer.provider,
+    usage: answer.usage,
+    tokens_in: answer.tokens_in,
+    tokens_out: answer.tokens_out,
+    truncated: false,
+    ledger: answer.ledger,
+    refused: true,
+    reason: 'named_person',
+    withheld: true,
+  }
+}
+
 // ─── The forwarder ───────────────────────────────────────────────────────────────────────────
 
 /**
@@ -220,7 +291,7 @@ export function retryAfterOf(value, now = Date.now()) {
  * world_not_configured (no /ask URL or no bearer on this machine) · 504 worker_timeout · 502 worker_unreachable · 502
  * bad_answer (a 200 that is not an answer).
  */
-export function createAsk(cfg, { fetchImpl: rawFetch = globalThis.fetch, log = () => {}, now = Date.now } = {}) {
+export function createAsk(cfg, { fetchImpl: rawFetch = globalThis.fetch, log = () => {}, now = Date.now, knownNames = () => [] } = {}) {
   const fetchImpl = withTimeout(rawFetch, cfg.askTimeoutMs ?? ASK_TIMEOUT_MS)
   const after = `${Math.round((cfg.askTimeoutMs ?? ASK_TIMEOUT_MS) / 1000)} s`
   /** Nit 7: whatever the Worker sends back, neither bearer's value is passed on. */
@@ -242,7 +313,7 @@ export function createAsk(cfg, { fetchImpl: rawFetch = globalThis.fetch, log = (
     const started = now()
     const done = (status, out, headers = {}) => {
       // the status, the code and the PA's own run id — never the question, never the answer, never the detail
-      const what = status === 200 ? (out.refused ? 'refused' : 'answered') : out.error
+      const what = status === 200 ? (out.reason === 'named_person' ? 'withheld (named a person)' : out.refused ? 'refused' : 'answered') : out.error
       log(`ask: ${status} ${what}${out.run_id ? ` · run ${String(out.run_id).slice(0, 8)}` : ''} · ${now() - started} ms`)
       return { status, body: out, headers }
     }
@@ -268,7 +339,18 @@ export function createAsk(cfg, { fetchImpl: rawFetch = globalThis.fetch, log = (
       }
       if (res.status === 200) {
         const answer = normaliseAnswer(payload, { secrets })
-        return answer ? done(200, answer) : done(502, { error: 'bad_answer', detail: 'The Worker answered 200 without an answer in the shape spec/ask.v1.json names.' })
+        if (!answer) return done(502, { error: 'bad_answer', detail: 'The Worker answered 200 without an answer in the shape spec/ask.v1.json names.' })
+        // the backstop: an answer (not a refusal) that names someone the ledger names is withheld here, text and refs alike
+        if (!answer.refused) {
+          let names = []
+          try {
+            names = knownNames() || []
+          } catch {
+            names = []
+          }
+          if (namesPerson([answer.answer, ...answer.based_on.map((b) => b.label)].join('\n'), names)) return done(200, withheldForPerson(answer))
+        }
+        return done(200, answer)
       }
       const status = Number.isInteger(res.status) && res.status >= 400 && res.status <= 599 ? res.status : 502
       const retryAfter = status === 429 ? retryAfterOf(res.headers?.get?.('retry-after'), now()) : null
