@@ -64,6 +64,12 @@ rule above).
   gives each run's gate count and state from the ledger, for any viewer, so a proposal adds one there. That is left as
   it is. `/rooms` is on M3's list of routes a client grant gets nothing from (`docs/multiplayer.md`, "Checks for M3");
   today there is one viewer per process, and the sidecar does not yet refuse `/rooms` by viewer.
+- **A sub-run waiting on someone else.** A sub-run waiting on a gate, none of which this viewer can tap, reads
+  **waiting · not yours to tap** in its parent's panel, with no gate detail. It used to read "done" (U18; fixed
+  2026-10-06). The fact is kept on the server beside the thread (`compass/threads.mjs` `waitsOnOthers`), and only the
+  sub-run lists read it. No served top-level thread carries it, so a failed run whose only gate is a hidden proposal is
+  served exactly as the same run with no gate. The Owner's line reads the same for a gate on a surface the world does
+  not know, one not in `ALL_SURFACES`, which no preset taps. That too is an improvement on the "done" it read before.
 
 Re-capture the three live responses after a Worker deploy with `scripts/capture-contract.sh` (`--substrate-only`, `--spend-only` for one of them) (bearer from `.env`; actors scrubbed, notes trimmed) and re-run `npm test`.
 

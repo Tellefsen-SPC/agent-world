@@ -194,7 +194,7 @@ export function linkSubagents(threads, runs) {
   }
   for (const [parentId, kids] of children) {
     const parent = byId.get(parentId)
-    parent.subruns = kids.map((k) => ({ id: k.id, title: k.title.split(' · ')[0], unread: k.unread, running: k.running, hasError: k.hasError, waiting: Boolean(k.waiting), gitBranch: k.gitBranch }))
+    parent.subruns = kids.map((k) => ({ id: k.id, title: k.title.split(' · ')[0], unread: k.unread, running: k.running, hasError: k.hasError, waiting: waitsOnOthers(k), gitBranch: k.gitBranch }))
     // a child that failed wears ! on the map, not ? — nothing to inherit from it
     const waiting = kids.filter((k) => k.unread && !k.hasError)
     if (waiting.length && !parent.hasError && !parent.unread) {
@@ -207,6 +207,15 @@ export function linkSubagents(threads, runs) {
   }
   return threads
 }
+
+/**
+ * Runs whose thread waits on a gate, none of its gates this viewer's — kept beside the thread, server-side, never on
+ * it: a thread object is copied whole into the request the still map serves (still.mjs `...t`), and a field there told
+ * every viewer that a failed run had a hidden proposal (delta check, 2026-10-06). A WeakSet: nothing spreads, serialises
+ * or outlives it. Read only by the sub-run lists (still.mjs subrunsOf, linkSubagents), where it says "waiting".
+ */
+const WAITS_ON_OTHERS = new WeakSet()
+export const waitsOnOthers = (thread) => Boolean(thread && typeof thread === 'object' && WAITS_ON_OTHERS.has(thread))
 
 export async function toThread(run, row, viewer, surfaces, now = Date.now(), opts = {}) {
   const runningTtlMs = opts.runningTtlMs ?? 2 * 3600 * 1000
@@ -254,7 +263,7 @@ export async function toThread(run, row, viewer, surfaces, now = Date.now(), opt
       ? failedText(run, row)
       : (typeof row?.notes === 'string' && row.notes.trim()) || art?.title || `${run.trigger || 'unknown'} run`
 
-  return {
+  const thread = {
     id: run.id,
     title: run.skill ? (gate ? `${run.skill} · ${gateLabel}` : run.skill) : 'Untitled run',
     preview,
@@ -276,10 +285,6 @@ export async function toThread(run, row, viewer, surfaces, now = Date.now(), opt
     // 2026-09-06: a live run with an open Pending Approval gate rendered as hammering.
     running: run.terminal == null && now - run.lastAt < runningTtlMs && pending.length === 0,
     unread,
-    // The run waits on a gate, and none of its gates is this viewer's: a sub-run's line in its parent's panel says
-    // "waiting" — never "done" — and nothing about the gate (no name, surface or link reaches it). Only when true, so the
-    // Owner's threads, who taps every gate, are as they were.
-    ...(pending.length && !unread ? { waiting: true } : {}),
     hasError: run.terminal === 'run_failed',
     starred: false,
     routine: false,
@@ -301,6 +306,9 @@ export async function toThread(run, row, viewer, surfaces, now = Date.now(), opt
     gateAt: shown.length ? Math.min(...shown.map((g) => g.at)) : 0,
     ref: { run_id: run.id, url: openUrl, context: contextUrl && contextUrl !== openUrl ? contextUrl : '', ...(consoleOpen ? { console: true } : {}) },
   }
+  // waits on a gate and none of its gates is this viewer's: a sub-run's line says "waiting", and nothing rides on the thread
+  if (pending.length && !unread) WAITS_ON_OTHERS.add(thread)
+  return thread
 }
 
 /**

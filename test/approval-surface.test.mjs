@@ -498,3 +498,52 @@ test("approval (older, sub-runs): a sub-run waiting on a gate the viewer cannot 
   assert.match(main, /esc\(subrunState\(s\)\)/, "the parent's panel draws each sub-run's line with it")
   assert.ok(!/'⚒ working' : 'done'/.test(main), 'and keeps no line of its own')
 })
+
+test('approval (delta 1): a failed run whose only gate is a hidden proposal serves exactly what the same run with no gate serves — under client, prime, viewer and operator', async () => {
+  const { buildStill } = await import(path.join(root, 'server/harnesses/compass/still.mjs'))
+  const { loadPack } = await import(path.join(root, 'server/harnesses/compass/pack.mjs'))
+  const pack = loadPack('tellefsen-campus')
+  const place = (c) => ({ zone: c || 'ZZTEST HQ', planet: 'zz', pack: pack.id, town: Boolean(c) })
+  const start = ev('e1', 'run_started', {}, { at: '2026-10-06T07:00:00Z' })
+  const failed = ev('e9', 'run_failed', { reason: 'zztest-broke' }, { at: '2026-10-06T07:40:00Z' })
+  const withProposal = [start, ev('e2', 'gate_waiting', { surface: 'approval', gate: `approval:${PROPOSAL}` }, { at: '2026-10-06T07:20:00Z' }), failed]
+  const withNothing = [start, failed]
+  const served = async (events, viewer) => {
+    const runs = fold(events)
+    const t = await toThread(runs.get(RUN), null, viewer, surfaces, NOW, { place, consoleProposalsUrl: `${WORKER}/console/proposals` })
+    const still = buildStill({ now: NOW, runs, threadOf: new Map([[RUN, t]]), pack, place, viewer })
+    return { thread: t, request: still.threads.find((x) => x.id === RUN), counts: still.counts }
+  }
+  for (const preset of ['client', 'prime', 'viewer', 'operator']) {
+    const viewer = makeViewer({ preset })
+    const a = await served(withProposal, viewer)
+    const b = await served(withNothing, viewer)
+    assert.equal(a.request?.badge, '!', `${preset}: the failure is a ! for every viewer`)
+    assert.deepEqual(JSON.parse(JSON.stringify(a.request)), JSON.parse(JSON.stringify(b.request)), `${preset}: the ! request is the same, byte for byte, as the run with no gate`)
+    assert.deepEqual(a.request, b.request, `${preset}: and as an object`)
+    assert.deepEqual(JSON.parse(JSON.stringify(a.thread)), JSON.parse(JSON.stringify(b.thread)), `${preset}: the run's own thread too`)
+    assert.deepEqual(a.counts, b.counts, `${preset}: and the strip's counts`)
+  }
+})
+
+test("approval (delta nit 2): the Owner's sub-run line reads \"waiting · not yours to tap\" for a gate on a surface the world does not know — better than the \"done\" it read before", async () => {
+  const { buildStill } = await import(path.join(root, 'server/harnesses/compass/still.mjs'))
+  const { loadPack } = await import(path.join(root, 'server/harnesses/compass/pack.mjs'))
+  const intray = await import(path.join(root, 'overlay/intray.mjs'))
+  const pack = loadPack('tellefsen-campus')
+  const place = (c) => ({ zone: c || 'ZZTEST HQ', planet: 'zz', pack: pack.id, town: Boolean(c) })
+  const CHILD = 'a1a1a1a1-0000-4000-8000-0000000000c4'
+  assert.ok(!ALL_SURFACES.includes('zztest_unknown_surface'), 'a surface the world does not know: no preset taps it, the Owner included')
+  const runs = fold([
+    ev('e1', 'run_started'),
+    ev('e2', 'gate_waiting', { surface: 'pending_approval', gate: 'ZZTEST gate', ref_url: 'https://airtable.com/appZZ/tblZZ/recZZ' }),
+    ev('c1', 'run_started', {}, { run_id: CHILD, parent_run_id: RUN, skill: 'zztest-child' }),
+    ev('c2', 'gate_waiting', { surface: 'zztest_unknown_surface', gate: 'ZZTEST odd gate' }, { run_id: CHILD, parent_run_id: RUN, skill: 'zztest-child' }),
+  ])
+  const viewer = makeViewer({ preset: 'owner' })
+  const threadOf = new Map()
+  for (const r of runs.values()) threadOf.set(r.id, await toThread(r, null, viewer, surfaces, NOW, { place }))
+  const parent = buildStill({ now: NOW, runs, threadOf, pack, place, viewer }).threads.find((t) => t.id === RUN)
+  assert.equal(intray.subrunState(parent.subruns.find((s) => s.id === CHILD)), 'waiting · not yours to tap')
+  assert.ok(!('waiting' in threadOf.get(CHILD)), 'and the fact never rides on the thread itself')
+})
