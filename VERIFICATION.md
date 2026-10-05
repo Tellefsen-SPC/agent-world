@@ -350,9 +350,10 @@ Absorbed 2026-09-07 by U29 (ES-6.4): prospects are not plots; the warmth (1.0 / 
      nothing else:
 
      ```
-     curl -s -m 30 -H "Authorization: Bearer $EVENTS_BEARER_TOKEN" "${EVENTS_URL%/events}/proposals?status=waiting" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);if(!Array.isArray(j.proposals))return console.log(s.slice(0,200));for(const p of j.proposals)console.log(p.id,p.actionClass,p.waitingSince)})'
+     curl -s -m 30 -H "Authorization: Bearer $EVENTS_BEARER_TOKEN" "${EVENTS_URL%/events}/proposals?status=waiting" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{let j;try{j=JSON.parse(s)}catch{return console.log("unexpected answer")}if(!Array.isArray(j.proposals))return console.log(typeof j.error==="string"?j.error:"unexpected answer");for(const p of j.proposals)console.log(p.id,p.actionClass,p.waitingSince)})'
      ```
 
+     An answer it does not expect prints only the Worker's error, or `unexpected answer`, and never the answer itself.
      Pick one that started waiting less than 14 days ago (the world's window), and note its id.
 - **Do (Owner):**
   1. Start the world with `./dev.sh`, open http://127.0.0.1:5274 and press I.
@@ -384,7 +385,7 @@ Absorbed 2026-09-07 by U29 (ES-6.4): prospects are not plots; the warmth (1.0 / 
   ```
 
   ```
-  curl -s -m 30 -H "Authorization: Bearer $EVENTS_BEARER_TOKEN" "${EVENTS_URL%/events}/ledger/scan?since=$(date -u -v-14d +%Y-%m-%dT00:00:00Z)" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const g="approval:"+process.argv[1];for(const e of JSON.parse(s).events||[])if(e.payload&&e.payload.gate===g)console.log(e.at,e.event_type,e.skill,e.payload.result||"")})' "$ID"
+  curl -s -m 30 -H "Authorization: Bearer $EVENTS_BEARER_TOKEN" "${EVENTS_URL%/events}/ledger/scan?since=$(date -u -v-14d +%Y-%m-%dT00:00:00Z)" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{let j;try{j=JSON.parse(s)}catch{return console.log("unexpected answer")}if(!Array.isArray(j.events))return console.log(typeof j.error==="string"?j.error:"unexpected answer");const g="approval:"+process.argv[1];for(const e of j.events)if(e&&e.payload&&e.payload.gate===g)console.log(e.at,e.event_type,e.skill,e.payload.result||"")})' "$ID"
   ```
 
   It prints one line per event for that gate: a `gate_waiting`, then a `gate_passed` with the result (`approved`,
