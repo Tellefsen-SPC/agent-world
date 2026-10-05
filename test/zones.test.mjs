@@ -84,7 +84,7 @@ test('U12: the sidecar serves the world and one layout file per non-home planet,
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-zones-'))
   const world = deriveWorld(substrate, { campus: 'ZZTEST HQ' })
   const viewer = makeViewer({ preset: 'owner', pack: 'tellefsen-campus' })
-  const handle = createOverlayApi({ getWorld: async () => world, descriptor: () => worldDescriptor(world, viewer, 'now'), dataDir })
+  const handle = createOverlayApi({ getWorld: async () => world, descriptor: () => worldDescriptor(world, viewer, 'now'), viewerFor: () => viewer, dataDir })
   const api = await startOverlayApi(handle, { port: 0 })
   assert.ok(api.port > 0, 'listens')
   const base = `http://127.0.0.1:${api.port}`

@@ -19,7 +19,7 @@
         "npm test is green: invariants (src unchanged, no model endpoints, adapter has no write calls, registry is [compass]); adapter tests are skipped until U3",
         "CLAUDE.md, SPEC.md, FEATURES.md, feature_list.json, VERIFICATION.md, init.sh, claude-progress.txt, .env.example, .mcp.json are in the repo root; .env, .claude/run_id and .claude/.gate-open are gitignored"
       ],
-      "passes": false,
+      "passes": true,
       "built_in_sandbox": "2026-09-06 — adapter skeleton, registry, tests and init.sh written and proven in the kickoff sandbox on a real clone (npm test 8/8, init.sh 'smoke ok' with a fake env). Remaining for the Mac: the fork itself, the upstream remote, .env, run ./init.sh, V-U1."
     },
     {
@@ -52,7 +52,7 @@
         "The response never contains the string SUPABASE_SERVICE_ROLE_KEY or anything shaped like a Supabase key",
         "A malformed since (not parseable as a date) → 400, not a 500 or a hang"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "U3",
@@ -69,7 +69,7 @@
         "In the browser: ZZTEST Client plot with Alpha holding ?, Beta hammering, Delta asleep; Gamma slumped with ! on Tellefsen HQ; HUD 'need you' = 1; two consecutive polls within 5 s issue one Supabase query burst (log)",
         "Post run_completed for Beta: within one poll Beta stops hammering and shows idle, no badge"
       ],
-      "passes": false,
+      "passes": true,
       "built_in_sandbox": "2026-09-06 — fold/threads/viewer/supabase written; fixture test green; real-data dry run over 23 live events / 9 runs green (correct zones, gate matching incl. a surface-less gate, no undefined fields). Remaining for the Mac: seed ZZTEST, open the world, V-U3."
     },
     {
@@ -87,7 +87,7 @@
         "Press A on any compass thread: nothing happens beyond the toast; data/colony.json 'archived' stays empty; no request other than GET reached Supabase, Notion or Airtable (adapter debug log)",
         "Reload the page: every plot is where it was (data/colony.json plots persisted)"
       ],
-      "passes": false,
+      "passes": true,
       "built_in_sandbox": "2026-09-06 — openThread/newSession/setArchived and the link-only Open resolution written; canArchive false. Remaining for the Mac: V-U5."
     },
     {
@@ -105,7 +105,7 @@
         "Select a ? figure and press A: nothing is hidden; a toast says the run is waiting on you; the figure stays",
         "Deselect (click empty ground): the panel disappears"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "U4",
@@ -119,7 +119,7 @@
         "test/surfaces.test.mjs green: 1 of 4 → 0.25 from an undashed id; the dashed id hits the cache; null → floor; unshared → floor without throwing; all GETs",
         "On the Mac with the Projects DB shared: an agent-world-build run's bar reads 25 %; Gamma's reads 5 %"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "U6",
@@ -133,20 +133,25 @@
         "test/surfaces.test.mjs green: each surface resolves on its own moved-on state; the negative answers come from a real read; no request for class_b_gate/client_gate; a thrown read returns false; resolved is cached",
         "Real-surface proof: a signed Content row → true; ZZTEST Alpha (Pending Approval) → false; an Active Decision → true"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "U7",
       "category": "seam",
-      "description": "Realtime nudge: the adapter subscribes to postgres_changes on ops_run_events and drops its scan cache on insert, so the next poll reflects an event that landed seconds ago; this demonstrates Realtime delivery to a subscriber (M0's open check)",
+      "description": "Realtime nudge — re-cut 2026-10-04 by the developer under delegated authority, to ratify (SPEC.md §4.7, docs/adr/0007): the adapter listens to the Compass Worker's GET /events/stream (server-sent events of ops_run_events, the events bearer, resumed with Last-Event-ID) and drops its scan cache on each event — a scan in flight is marked stale too — so a poll inside the 5 s cache window (counted from when the scan finished) reads the ledger at once instead of a cached answer; it reconnects with backoff and is bounded so it never holds up a poll; a stream that is down is not an outage; WORLD_STREAM=0 switches it off; GET /world carries signals.stream {enabled, connected, state, since, lastEventAt, nudges, nudgedScans, reconnects, error}, counts and times only. The first design (Supabase postgres_changes) needed a Supabase key this machine never holds; M0's Realtime-delivery check is not closed by this path (the Worker reads the table every 2 s).",
       "delivers": [
         "ES-1.10"
       ],
       "steps": [
-        "Server log shows 'realtime: subscribed ops_run_events' within 5 s of start and reconnects after a forced disconnect",
-        "Post an event via /events: the log shows the insert received within 2 s and 'scan cache invalidated'",
-        "The next /api/threads (poll) reflects the event without waiting for the 5 s cache to expire",
-        "With Realtime unreachable (bad URL) the world still works on the 5 s cache and logs once"
+        "automated: the SSE parser reads the Worker's frames however the bytes are split, with LF, CRLF or CR line ends; an id becomes the resume point only when its event is dispatched (an event cut off mid-way leaves the previous one); an unterminated line past the cap ends the connection",
+        "automated: against a local stand-in for the Worker: subscribes with the bearer and Accept text/event-stream, hands each `event: ledger` row on, resumes from Last-Event-ID after the Worker closes the stream, honours its retry hint; one warning for an outage and one for the recovery, none for a routine reconnect",
+        "automated: backoff doubles up to its cap; a refused bearer (401/403) or a Worker without the route (404/405) waits the longest at once; no answer, the wrong content type, silence, a giant message and an empty close are each given up on and retried, and a Worker that opens and then fails keeps backing off",
+        "automated: WORLD_STREAM=0 (off/false/no) makes no connection; the stream URL is derived from EVENTS_URL only when it ends in /events; stop() ends the stream with nothing reconnecting, and start() after stop() on the same instance connects again",
+        "automated: through the harness: the scan cache counts from when the scan finished and serves the next poll; an event on the stream drops it, the next poll reads the ledger at once and signals.stream.nudgedScans rises — counted only for a scan that starts before the dropped cache would have run out (a poll after natural expiry, and a nudge that drops nothing, read 0); an event during a scan makes that scan's answer stale; a stream that is down or hanging neither holds up a poll nor raises the Compass pill; no token, run or name in signals.stream",
+        "automated: the contract guard allows /events/stream as the fifth Worker route, requested verbatim (no query) from stream.mjs only",
+        "live (V-U7, with the Worker deployed from main): within 5 s of start the log reads `bot-crossing: compass — realtime: subscribed ops_run_events (GET /events/stream)`; with a poll loop keeping the cache warm, `scripts/zztest-seed.sh --one` logs `realtime: run_started on run … received — scan cache invalidated` within about 3 s and signals.stream.nudgedScans rises; the Worker's ~50 s close reconnects with Last-Event-ID and no warning",
+        "live: with WORLD_STREAM=0, signals.stream reads off with nudges and nudgedScans 0, and the world works on its polls alone",
+        "npm test green; vite build bundles the overlay; git diff $(git merge-base HEAD upstream/main) -- src/ server/api.mjs server/scan.mjs server/harnesses/claude-code.mjs empty"
       ],
       "passes": false
     },
@@ -165,7 +170,7 @@
         "A pending_approval update whose Status stays Pending Approval writes nothing; an update on any other table_key writes nothing",
         "Worker deploy + a smoke run recorded in the PR; the Worker's own tests green"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "U8",
@@ -717,6 +722,48 @@
       "verified": null
     },
     {
+      "id": "U36",
+      "category": "spend",
+      "milestone": "M2b — The still map (Decision 2026-09-07; SPEC.md §3 O6) · ES-4.13 Spend — U36 cut 2026-09-08 (chat spend estimated in Compass SPEND_ESTIMATES), built 2026-09-08 · added to this list 2026-10-04 by the developer under delegated decision authority (the spec merge, Prompt E2, was owed), to ratify",
+      "description": "The empty town and the estimate line — every town of the planet on screen carries a line under the Owner preset: a town with no by_client row, or runs_total 0, reads `no runs · 30d` (never blank, never $0), or `no metered runs · 30d` when it has an estimate; a by_client row's est (the client's chat-usage estimate from SPEND_ESTIMATES, attributed by client name — U36W, external) is its own dimmer line under the metered one — `est. chat {in+out} · ~{cost} · {start}–{end} · {n} conversations`, plus `· attributed by name` for confidence medium — and is never summed into a metered counter; the corner office carries the campus's totals.est and the planet switcher the planet's; shown only under a pack whose spend.estimates is true (tellefsen-campus; neutral shows nothing); never per person (Annex III)",
+      "delivers": [
+        "ES-4.13"
+      ],
+      "depends_on": [
+        "U35"
+      ],
+      "external": [
+        "U36W — estimates on GET /world/spend in tellefsen-compass-mcp (live 2026-09-08: estimates_version, by_client[].est, totals.est)"
+      ],
+      "prereq": [
+        "U35 Built",
+        "U36W live: GET $W/world/spend?window=30 answers 200 with estimates_version and est on by_client rows (Step 1 probe)"
+      ],
+      "repo": "agent-world",
+      "files": [
+        "compass/spend.mjs (estimates_version whitelisted; est rides through untouched)",
+        "spec/world-spend.v1.json (estimates_version, by_client[].est, totals.est)",
+        "spec/pack.v1.json (spend.estimates)",
+        "overlay/spend.mjs (townLines, estLine, showEstimates, withEst, the billions tier)",
+        "overlay/main.js (town card lines, corner office, planet switcher #aw-planet-est, refoldSpend)",
+        "overlay/packs/*/pack.json (spend.estimates)",
+        "test/fixtures/m2b-spend.live.json (re-captured with scripts/capture-contract.sh --spend-only)"
+      ],
+      "steps": [
+        "automated: the empty town — a town with no by_client row, or one with runs_total 0 and no est, reads one quiet line `no runs · 30d`: never blank, never $0",
+        "automated: the estimate line — `est. chat {in+out} · ~{cost} · {start}–{end} · {n} conversations`, compact numbers, the tilde and the word est. mandatory; confidence medium adds `· attributed by name`; a segment the est lacks is left out (totals.est has no period and no conversations); OMR multiplies by display.omr_per_usd",
+        "automated: no summing — the metered line is byte-identical with and without est; the fold's counters, the campus, the planet and both identities are unchanged by an est; the campus and the planet carry totals.est on their own line",
+        "automated: the pack flag — spend.estimates true on tellefsen-campus shows the estimate line; a pack without it, neutral, or any preset but Owner hides it, and the town reads `no runs`, not `no metered runs`",
+        "automated: the live capture — estimates_version rides through the reader; the clients carrying est read `no metered runs · 30d` and their estimate; no actor and no person-shaped key on any est",
+        "automated: spec/world-spend.v1.json validates the re-captured GET /world/spend and refuses an est short of cost_usd_est, a confidence outside low | medium | high and a negative cost; est and estimates_version are optional",
+        "live: on the dev server under the Owner preset, a town whose runs are unmetered reads `no metered runs · 30d` over its `est. chat …` line; the planet switcher and the corner office read the totals.est line; the ZZTEST towns read `no runs · 30d` (the default read excludes test rows)",
+        "npm test green; vite build bundles the overlay; git diff upstream/main -- src/ empty"
+      ],
+      "check": "V-U35, extended for U36 (Sitting S, runner Prompt V) — VERIFICATION.md carries no separate V-U36 yet",
+      "passes": true,
+      "verified": null
+    },
+    {
       "id": "U21",
       "category": "film",
       "milestone": "M2",
@@ -742,6 +789,52 @@
         "Christoffer films; files to Drive; chat links it from Sent Documents"
       ],
       "check": "V-U21",
+      "passes": false,
+      "verified": null
+    },
+    {
+      "id": "U37",
+      "category": "resilience",
+      "milestone": "M3 — the Engineering spine's U8 (Agent World backend), built 2026-10-04 · added to this list by the developer under delegated decision authority, to ratify at the next build-kickoff refresh",
+      "description": "The world when Compass is down, and today's cost per town — every read (Compass ledger scan, substrate, spend, today's cost; Notion; Airtable) has a deadline that covers the whole answer, body included; the ledger scan retries once on a network failure or 502/503/504 and refuses an answer that is not { events, rows }; polls during a scan share it; while the ledger scan or the substrate is failing the world keeps what it last saw and GET /world carries signals.compass = {ok, downSince, lastGoodAt, error, failing, seen}, which the strip draws as a 'Compass unavailable · since HH:MM' pill; a town card carries `Today · $… · N runs` from GET /ledger/cost?days=1 (Compass U5) under the Owner preset, unpriced and unmetered runs said on the line, 'unavailable' when the last answer is from an earlier UTC day; never per person (Annex III); docs/multiplayer.md says what M3 hosting needs",
+      "delivers": [
+        "Engineering spine U8"
+      ],
+      "depends_on": [
+        "U35"
+      ],
+      "external": [
+        "Compass U5 — GET /ledger/cost in tellefsen-compass-mcp (merged 2026-10-04, #13; not yet deployed)"
+      ],
+      "prereq": [
+        "U35 Built",
+        "Compass U5 deployed: GET $W/ledger/cost?days=1 answers 200 (for the Today line only)"
+      ],
+      "repo": "agent-world",
+      "files": [
+        "compass/health.mjs",
+        "compass/config.mjs (WORLD_LEDGER_TIMEOUT_MS, WORLD_LEDGER_LONG_TIMEOUT_MS, WORLD_READ_TIMEOUT_MS)",
+        "compass/supabase.mjs, substrate.mjs, spend.mjs, notion.mjs, surfaces.mjs, steering.mjs, rooms.mjs (deadlines)",
+        "compass.mjs (single-flight scan, health per source)",
+        "compass/overlay-api.mjs (GET /spend/today)",
+        "overlay/signals.mjs (compassNotice), overlay/spend.mjs (todayLine), overlay/zones.mjs, overlay/main.js (strip pill, town card line)",
+        "spec/ledger-cost.v1.json",
+        "docs/multiplayer.md, docs/CONTRACT.md"
+      ],
+      "steps": [
+        "automated: a read that does not answer gives up at its deadline and names the route; a body that stalls after its headers times out too",
+        "automated: the ledger scan retries a 503 once, never a 401, a 500 or a timeout, and gives up after a second network failure; null, {}, [], an error object are refused",
+        "automated: a 200 whose body runs past the deadline is an error for Notion and Airtable, never an empty success",
+        "automated: health per source — down since the first failure, last good kept, reset by a good read; the substrate failing is an outage while the ledger answers; a failed substrate read is retried in 10 s",
+        "automated: three concurrent polls → one ledger scan and the same answer",
+        "automated: the strip notice — nothing while Compass answers or loads; what is current, old or never loaded, per source",
+        "automated: the today reader, the sidecar's /spend/today, the Today line (cost, runs, unmetered, unpriced, no runs, unavailable, a stale day), Owner-only, no actor",
+        "automated: spec/ledger-cost.v1.json validates the answer the Worker's own handler gives; the adapter reads exactly five Worker routes (U7 added /events/stream, 2026-10-04) and every Worker URL it assembles is one of them",
+        "live: EVENTS_URL at a closed port, then at a hanging `nc -lk 59998` → the world loads, the pill reads 'Compass unavailable · since HH:MM', signals.compass.ok false; the real URL back → the pill gone after one poll",
+        "live: with Compass U5 deployed, the ZZTEST Client town card under the Owner preset reads `Today · … · N runs`, matching GET /ledger/cost?days=1&include_test=1 for that town; nothing under another preset",
+        "npm test green; vite build bundles the overlay; git diff $(git merge-base HEAD upstream/main) -- src/ server/api.mjs server/scan.mjs server/harnesses/claude-code.mjs empty"
+      ],
+      "check": "V-U37",
       "passes": false,
       "verified": null
     }

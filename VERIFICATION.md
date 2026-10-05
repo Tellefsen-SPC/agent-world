@@ -82,8 +82,35 @@ See: (1) the content run's `?` is gone at the first poll and its title has dropp
 Fail looks like: a `?` persisting past a poll (check the terminal for a warning naming the read that failed); a `gate_passed` with actor other than `cowork`/a human appears (the adapter wrote — forbidden); Alpha turns `!` or vanishes.
 Cleanup: set the ZZTEST Alpha row back to Pending Approval for the next run of this check (the world re-reads it after a restart).
 
-## V-U7 — Realtime nudge — deferred, no check yet
-U7 needs a Supabase key on this machine to open a Realtime subscription — the same constraint U10 exists to route around. There is nothing to verify until that's resolved some other way. The 5 s scan cache + 15 s browser poll is the working transport in the meantime (proven by every other check in this file); a new agent or a cleared `?` shows up within one poll regardless. Revisit this check if U7 is ever un-deferred.
+## V-U7 — Realtime nudge (over the Worker's event stream)
+*Re-based 2026-10-04 by the developer under delegated authority, to ratify: U7 no longer needs a Supabase key — it listens to the Compass Worker's `GET /events/stream` (SPEC.md §4.7). Until the Worker is deployed from main, this check cannot run; the automated half is `test/stream.test.mjs` and `test/stream-harness.test.mjs`.*
+
+What only the nudge can cause: the scan is cached for 5 s from when it finishes, so without the nudge a poll inside that window gets the cached answer. With the nudge, an event drops the cache, and the next poll reads the ledger at once. `signals.stream.nudgedScans` counts exactly those early reads. A scan is counted only if it starts before the dropped cache would have run out on its own (for an event during a scan, that scan's finish + 5 s). A poll after natural expiry is never counted, and a nudge that drops nothing cannot raise the count (`test/stream-harness.test.mjs` proves both, including that a nudge with its cache drop removed reads 0).
+
+- **Setup:** the Worker deployed from main. With `.env` loaded (`set -a; . ./.env; set +a`), `curl -sN -m 5 -H "Authorization: Bearer $EVENTS_BEARER_TOKEN" "${EVENTS_URL}/stream" | head -2` prints `retry: 1000` and `: connected — polling every 2s`. A 404 means the Worker on Cloudflare is older than main: stop here.
+- **Do:**
+  1. Stop the world, start it with `DEBUG=world ./dev.sh`.
+  2. In a second terminal, read the stream's record: `curl -s 127.0.0.1:5275/world | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).signals.stream))'`
+  3. Still in the second terminal, keep the cache warm with a poll every second: `while true; do curl -s -o /dev/null 127.0.0.1:5274/api/threads; sleep 1; done`
+  4. In a third terminal: `scripts/zztest-seed.sh --one` (one ZZTEST run, `run_started` only).
+  5. Wait 5 s, stop the loop (Ctrl-C), and run step 2's command again.
+  6. Stop the world, set `WORLD_STREAM=0` in `.env`, and repeat steps 1–5.
+- **See:**
+  - Within 5 s of the start, the terminal running the world prints `bot-crossing: compass — realtime: subscribed ops_run_events (GET /events/stream)`.
+  - Step 2 shows `connected: true`, `nudges: 0`, `nudgedScans: 0`.
+  - During step 3, before step 4: the debug log's `[world] ledger: … events, … rows since …` lines (the 14-day window) come about every 10–15 s, not once a second. A live read takes 6–9 s, then the cache serves the loop for 5 s.
+  - Within about 3 s of step 4: `[world] realtime: run_started on run 1a2b3c4d received — scan cache invalidated` (the run id's first 8 characters). The loop's next poll then starts a scan at once, and its `[world] ledger: …` line follows when that read returns.
+  - Step 5 shows `nudges` and `nudgedScans` at 1 or more, and `lastEventAt` set. Only a working nudge raises `nudgedScans`. If it reads 0 with `nudges` at 1 or more, the event landed in the under-a-second gap between the cache running out and the loop's next poll, where no read is early. Run step 4 again; two zeros in a row is a fail.
+  - With `WORLD_STREAM=0` (step 6): `connected: false`, `state: 'off'`, `nudges: 0`, `nudgedScans: 0`, no `realtime:` line, and after `--one` the next `ledger:` line waits for the cache to run out. The world works as before.
+  - About every 50 s, the debug log prints `[world] realtime: the Worker closed the stream after 50 s — reconnecting in 1000 ms with Last-Event-ID`. Before the first event has arrived, it prints the line without the ending: `[world] realtime: the Worker closed the stream after 50 s — reconnecting in 1000 ms`. Either way, `connected` is true again a second later, and no warning is printed.
+- **Fail looks like:**
+  - no `subscribed` line, or `nudgedScans` that stays 0 while events arrive;
+  - an event that never logs `scan cache invalidated`;
+  - a `nudgedScans` above 0 with `WORLD_STREAM=0`;
+  - a "Compass unavailable" pill caused by the stream alone;
+  - a warning on every routine reconnect;
+  - the bearer token, a run, a skill or a client name inside `signals.stream`.
+- **Cleanup:** remove `WORLD_STREAM=0`; `scripts/zztest-seed.sh --clean`.
 
 ## V-U9 — Worker write-gate (tellefsen-compass-mcp)
 Setup: a fresh ZZTEST Alpha run (seed script) with its gate's `ref_url` pointing at a ZZTEST Pending Approval row (Status *Pending Approval*); the Worker deployed with U9.

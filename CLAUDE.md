@@ -6,7 +6,7 @@ The Build Pack is canonical for the unit table and the verifier's checks: Notion
 A local mirror of Tellefsen's Run Ledger: every governed skill run is an astronaut on its client's plot; a run waiting on a human holds a `?`; N flies to the next one. A fork of jarrenrocks/bot-crossing (MIT). Outcome and end-states: `SPEC.md`.
 
 ## Ownership
-Tellefsen SPC internal product. Repo `Christoffer-Tellefsen/agent-world` (private). Remote `upstream` = https://github.com/jarrenrocks/bot-crossing, pinned at 87ec837. Owner and only user until M3: Christoffer.
+Tellefsen SPC internal product. Repo `Tellefsen-SPC/agent-world` (moved from `Christoffer-Tellefsen/agent-world`, which redirects). **It is public** (checked 2026-10-04); the decision is to make it private (2026-10-04, to ratify). Changing visibility is an owner action in GitHub's settings and has not been done — until it is, treat everything committed here as published. Remote `upstream` = https://github.com/jarrenrocks/bot-crossing; the fork is built on 87ec837, and `npm test` diffs against `git merge-base HEAD upstream/main`. Owner and only user until M3: Christoffer.
 
 ## System of record — who writes what
 - `ops_run_events`, `ops_skill_runs` (Supabase, Compass): written by skills, Cowork jobs, the Worker `POST /events` and the hooks in `.claude/hooks/`. **Read only here.**
@@ -31,7 +31,7 @@ Here that means: `actor` draws an avatar and nothing else; `human_edit_level`, t
 
 ## Never touch
 - `src/**`, `server/scan.mjs`, `server/api.mjs`, `server/harnesses/claude-code.mjs`.
-- The ledger tables — no writes, no deletes. `scripts/zztest-cleanup.sql` assumed Supabase SQL editor access, which isn't available (Lovable-managed project) — not solved yet; harmless in the meantime since `RUN_GOVERNANCE_RULES.test_run_exclusion` already excludes `zztest-%` rows everywhere. Resolve before milestone close, not before.
+- The ledger tables — the world never writes or deletes. ZZTEST cleanup is `scripts/zztest-seed.sh --clean`, a test fixture, not the adapter: it calls the Worker's `DELETE /ledger/zztest`, which removes `skill LIKE 'zztest-%'` rows and nothing else (Decision 2026-09-06). `scripts/zztest-cleanup.sql` was removed on 2026-09-06 (8d6ceba); it assumed a Supabase SQL editor this Lovable-managed project does not have.
 - Production Pending Approval rows, Decisions and Milestones — read only; tests use ZZTEST rows.
 - Any model API. The world burns zero tokens; `npm test` fails on a model endpoint anywhere outside `node_modules`.
 
@@ -39,6 +39,7 @@ Here that means: `actor` draws an avatar and nothing else; `human_edit_level`, t
 - `./init.sh` — install, build, syntax-check the adapter, `npm test`, start the server, smoke `/api/harnesses` (compass detected) and `/api/threads`. Run it first, every session.
 - `./dev.sh` — the world at http://127.0.0.1:5274 (loads `.env`, then `npm run dev`). **Plain `npm run dev` does not read `.env` and shows an empty world** — Vite never passes `.env` to the server-side API. `npm test` — invariants + adapter fixture tests.
 - `scripts/zztest-seed.sh` — posts the standing ZZTEST runs to `/events` (needs `EVENTS_BEARER_TOKEN` and `ZZTEST_PA_URL`). `scripts/reset-view.sh` — clears this browser's local hide list (A key) so every run shows again.
+- `RUNBOOK.md` — for whoever runs the world: settings, the "Compass unavailable" pill, re-capturing fixtures, failures as symptom → check → fix. `docs/adr/` — the fork's standing calls and their status. CI (`.github/workflows/ci.yml`) runs `npm ci`, `npm test`, `npm run build` on every push and PR.
 
 ## Session rules
 1. Read `claude-progress.txt`, `git log --oneline -20`, `feature_list.json`; run `./init.sh` before changing anything.
@@ -55,4 +56,4 @@ Design detail → decide in-session, note it in `claude-progress.txt`, propose a
 Unit Built → its check passes in the verifier's hands → Verified. All M1 units Verified → M1 regression pass → M1 Done (`milestone-close`). All milestones Done → acceptance. The builder never self-declares.
 
 ---
-Changes: 2026-09-06 · v1 · written by build-kickoff v1.3. · 2026-09-08 · session rule 6 gains the usage block (U35, Prompt D from Christoffer).
+Changes: 2026-09-06 · v1 · written by build-kickoff v1.3. · 2026-09-08 · session rule 6 gains the usage block (U35, Prompt D from Christoffer). · 2026-10-04 · factual fixes: the repo's name and visibility (public; private is the decision, an owner action), the fork base checked by merge-base, the ZZTEST cleanup is `zztest-seed.sh --clean` (the .sql is gone); Commands names RUNBOOK.md, docs/adr/ and CI — by the developer under delegated authority, to ratify.

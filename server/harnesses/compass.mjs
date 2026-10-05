@@ -29,6 +29,7 @@ import { roomForSkill, roomName } from './compass/pack.mjs'
 import { createArchive } from './compass/archive.mjs'
 import { CAMPUS } from './compass/config.mjs'
 import { createHealth } from './compass/health.mjs'
+import { createStream } from './compass/stream.mjs'
 
 const cfg = loadConfig()
 const log = cfg.debug ? (...a) => console.error('[world]', ...a) : () => {}
@@ -113,28 +114,87 @@ function ensureOverlayApi() {
     rooms, // U31: GET /rooms, GET /rooms/<id>
     archive, // U32: GET /archive
     spend, // U35: GET /spend — the Worker's spend object; the overlay folds it through the pack (overlay/spend.mjs)
+    // Who is asking: today the one viewer from WORLD_VIEWER_PRESET; at M3 the identity the hosted world's sign-in hands the request
+    // (docs/adr/0006). The sidecar answers spend to the Owner only and takes a layout write only with `layout`.
+    viewerFor: () => viewer,
     // U20: the prospect rows ride with the world (one Airtable GET a minute); the overlay decides who stands and how faded.
     descriptor: async () => {
       const w = world || (await currentWorld().catch(() => deriveWorld(null, { campus: CAMPUS, tenant: cfg.tenant })))
       const pack = homePack()
       // M2b: the rooms (zone names the room plots carry) and the lod thresholds ride with the world; prospects are rows for the strategy room, not plots.
-      return { ...worldDescriptor(w, viewer), signals, rooms: roomsOf(pack), lod: lodOf(pack), packId: pack.id || '', prospects: await steering.prospectRows() }
+      // U7: signals.stream says whether the nudge is on and what it did — never part of signals.compass (a stream down is not an outage)
+      return { ...worldDescriptor(w, viewer), signals: { ...signals, stream: streamSignal() }, rooms: roomsOf(pack), lod: lodOf(pack), packId: pack.id || '', prospects: await steering.prospectRows() }
     },
     log,
   })
   overlayApi = startOverlayApi(handle, { port: cfg.overlayPort, log })
 }
 
+/**
+ * U7 — the realtime nudge (ES-1.10), over the Worker's GET /events/stream (compass/stream.mjs). Each ledger event drops
+ * the scan cache, so the next poll reads the ledger instead of a cached answer; an event that lands while a scan is in
+ * flight marks that scan's answer stale too (runScan). The stream runs beside the polls and never in front of them: a
+ * stream that is down, slow or switched off (WORLD_STREAM=0) leaves the world on its 5 s cache and 15 s poll, and is
+ * not an outage. Started with the sidecar, never on its own under npm test (a test starts it through _internals).
+ */
+let stream = null
+let nudgedAt = 0
+/** What the nudge has done since start: events that dropped the cache, and scans that ran early because of one. */
+let nudges = 0
+let nudgedScans = 0
+/** When the last scan finished — the cache's own clock, kept apart from scanCache.at, which a nudge zeroes. */
+let scanFinishedAt = 0
+/**
+ * A scan that starts before this moment starts early: before the cache a nudge dropped would have run out on its own.
+ * 0 when no nudge is waiting. Only such a scan is counted, so a poll that comes after natural expiry is never credited
+ * to the nudge — and a nudge that dropped nothing can never raise the count (V-U7 rests on that).
+ */
+let earlyUntil = 0
+function nudge(row) {
+  nudges += 1
+  nudgedAt = Date.now()
+  // A fresh cache, dropped now, would have run out at its finish + scanCacheMs. An event during a scan sets its window
+  // when that scan finishes (runScan).
+  const expires = scanFinishedAt + cfg.scanCacheMs
+  if (!scanning && scanCache.at && nudgedAt < expires) earlyUntil = Math.max(earlyUntil, expires)
+  scanCache = { at: 0, threads: scanCache.threads }
+  log(`realtime: ${row?.event_type || 'event'} on run ${String(row?.run_id || '?').slice(0, 8)} received — scan cache invalidated`)
+}
+function ensureStream({ inTest = false } = {}) {
+  if (stream || (process.env.NODE_TEST_CONTEXT && !inTest)) return stream
+  if (!cfg.streamEnabled || !cfg.streamUrl || !cfg.eventsBearerToken) return null
+  // Vite re-imports the adapter in-process when a server file changes: end the previous instance's stream first.
+  globalThis.__awStream?.stop?.()
+  stream = createStream(cfg, { onEvent: nudge, log })
+  globalThis.__awStream = stream
+  stream.start()
+  return stream
+}
+/**
+ * signals.stream on GET /world: is the nudge connected, when did the last event arrive, how many events dropped the
+ * cache (nudges) and how many scans ran early because of one (nudgedScans — zero with WORLD_STREAM=0). Counts and
+ * times only: no token, no run, no person.
+ */
+function streamSignal() {
+  const s = stream ? stream.status() : { enabled: false, state: 'off', since: null, lastEventAt: null, reconnects: 0, error: cfg.streamEnabled ? (cfg.streamUrl ? 'not started' : 'no stream URL: EVENTS_URL is not the Worker events address') : 'switched off (WORLD_STREAM=0)' }
+  return { enabled: s.enabled, connected: s.state === 'open', state: s.state, since: s.since, lastEventAt: s.lastEventAt, nudges, nudgedScans, reconnects: s.reconnects, error: s.error }
+}
+
 /** Present on this machine = the Worker's ledger route is reachable in principle. Cheap; runs every poll. */
 const detect = async () => {
   const on = Boolean(cfg.ledgerUrl && cfg.eventsBearerToken)
-  if (on) ensureOverlayApi()
+  if (on) {
+    ensureOverlayApi()
+    ensureStream()
+  }
   return on
 }
 // U29: the sidecar is up from the moment the adapter loads, not from the first poll — the overlay's fetch seam holds the
 // page's own state read until GET /world has answered (the layout is generated inside that answer), and the page's
 // first poll comes after its state read; a sidecar that waited for the poll would never start. Never under npm test.
 if (cfg.ledgerUrl && cfg.eventsBearerToken && cfg.overlayPort && !process.env.NODE_TEST_CONTEXT) ensureOverlayApi()
+// U7: the stream likewise, from load (its socket is unref'd: a script that imports the adapter still exits).
+if (cfg.ledgerUrl && cfg.eventsBearerToken && !process.env.NODE_TEST_CONTEXT) ensureStream()
 
 /**
  * The skills with any event in the last STALE_DAYS days (U17 hand-raise). The Worker takes 6–9 s per scan
@@ -221,20 +281,28 @@ async function scan(now = Date.now()) {
 }
 
 /**
- * The scan, cached so the browser's 15 s poll costs one query burst; the last good result survives a failed read.
+ * The scan, cached for scanCacheMs (5 s) from when it finished, so the polls of several pages cost one query burst;
+ * an event on the stream drops the cache (U7); the last good result survives a failed read.
  * U37: one scan at a time — polls that land while a scan runs share it, so Compass is read once however many pages
  * poll, and a slow scan can never finish after a newer one and report an outage that is already over.
  */
 let scanning = null
 function scanThreads() {
   if (Date.now() - scanCache.at < cfg.scanCacheMs) return Promise.resolve(scanCache.threads)
-  scanning ||= runScan(Date.now()).finally(() => (scanning = null))
+  if (!scanning) {
+    const t = Date.now()
+    if (t < earlyUntil) nudgedScans += 1 // before the dropped cache would have run out: early, because of an event
+    earlyUntil = 0
+    scanning = runScan(t).finally(() => (scanning = null))
+  }
   return scanning
 }
 
 async function runScan(now) {
   try {
-    scanCache = { at: now, threads: await scan(now) }
+    // The cache counts from when the scan finished, not when it started: a 6–9 s scan stamped with its start was
+    // already stale by the next poll, so the cache served nothing and the nudge had nothing to drop (U7 review).
+    scanCache = { threads: await scan(now), at: Date.now() }
     health.ok()
   } catch (err) {
     if (now - lastErrorAt > 60_000) {
@@ -243,7 +311,14 @@ async function runScan(now) {
     }
     // The last good threads stay on screen — and the page is told they are old (U37).
     health.fail(err)
-    scanCache = { at: now, threads: scanCache.threads }
+    scanCache = { at: Date.now(), threads: scanCache.threads }
+  }
+  scanFinishedAt = scanCache.at
+  if (nudgedAt >= now) {
+    // U7: an event landed while this scan ran — its answer is stale, and the next poll reads again. Without the event
+    // that answer would have served polls until now + scanCacheMs: a scan before then is early.
+    earlyUntil = Math.max(earlyUntil, scanFinishedAt + cfg.scanCacheMs)
+    scanCache.at = 0
   }
   // The substrate is the world's map: when it is failing, the towns on screen are old (or missing) too.
   const sub = substrate.status?.()
@@ -266,4 +341,4 @@ const setArchived = async () => ({ ok: false, error: 'The world is a mirror; run
 export default { id: 'compass', name: 'Compass', detect, scanThreads, openThread, newSession, setArchived }
 
 /** Exposed for tests and the console — never for the browser. */
-export const _internals = { scan, cfg, viewer, world: () => world, currentWorld, signals: () => signals, steering, health, invalidate: () => (scanCache = { at: 0, threads: scanCache.threads }) }
+export const _internals = { scan, cfg, viewer, world: () => world, currentWorld, signals: () => signals, steering, health, invalidate: () => (scanCache = { at: 0, threads: scanCache.threads }), startStream: () => ensureStream({ inTest: true }), stream: streamSignal }

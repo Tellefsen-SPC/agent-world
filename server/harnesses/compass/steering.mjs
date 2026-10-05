@@ -79,13 +79,20 @@ export function nextMilestone(list) {
 export function createSteering(cfg, { surfaces, substrate, fetchImpl: rawFetch = globalThis.fetch, log = () => {}, now = Date.now } = {}) {
   const fetchImpl = withTimeout(rawFetch, cfg.readTimeoutMs ?? 10_000) // U37: a deadline on every read
   const caches = new Map() // key → { at, value }
+  const inflight = new Map() // key → the read in flight; concurrent callers on a cold or expired key share it (docs/adr/0004)
   /** A good answer lives CACHE_MS; an answer that names an error is retried after ERROR_MS, so a blip does not blank a panel for five minutes. */
-  const cached = async (key, fn) => {
+  const cached = (key, fn) => {
     const hit = caches.get(key)
-    if (hit && now() - hit.at < (hit.value?.error ? ERROR_MS : CACHE_MS)) return hit.value
-    const value = await fn()
-    caches.set(key, { at: now(), value })
-    return value
+    if (hit && now() - hit.at < (hit.value?.error ? ERROR_MS : CACHE_MS)) return Promise.resolve(hit.value)
+    if (!inflight.has(key)) {
+      const read = (async () => {
+        const value = await fn()
+        caches.set(key, { at: now(), value })
+        return value
+      })()
+      inflight.set(key, read.finally(() => inflight.delete(key)))
+    }
+    return inflight.get(key)
   }
   const fix = (status, what) =>
     status === 404 ? `${what}: not shared with the integration — share it with the "Tellefsen - Agent world" integration` : status === 401 ? `${what}: the token was refused — check NOTION_TOKEN in .env` : `${what}: read failed (${status})`

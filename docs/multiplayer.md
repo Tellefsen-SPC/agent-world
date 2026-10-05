@@ -13,10 +13,10 @@ this repo as of U37.
 | Who is looking | One viewer per process, chosen by `WORLD_VIEWER_PRESET` (Owner by default). No login | `server/harnesses/compass/viewer.mjs` |
 | Who can reach it | The upstream API wants a local `Host` (loopback, or the machine's own LAN address) on every request, and a local `Origin` whenever one is sent. The sidecar is stricter on `Host` (loopback only). It answers a GET that carries a foreign `Origin`, but without CORS headers, so a page from elsewhere cannot read the answer | `server/api.mjs` `isLocalRequest` (upstream, never edited), `compass/overlay-api.mjs` |
 | How the page finds the sidecar | `location.hostname` on port 5275: a second origin beside the page | `overlay/zones.mjs` `SIDECAR` |
-| What it reads | Four Worker routes with one bearer token, plus Notion and Airtable with their own tokens (`NOTION_TOKEN`, `AIRTABLE_TOKEN`). All of it is read on the server, never in the browser | `compass/config.mjs`, `docs/CONTRACT.md` |
-| How often | Cached on the server: substrate, spend and today's cost 60 s; room panels 5 min. The ledger scan's 5 s cache counts from the start of the scan. A live scan takes 6–9 s, so with pages polling, scans run back to back, one at a time: polls that land during a scan share it. The other caches do not share an in-flight read, so viewers polling as a cache expires can each trigger one | `compass.mjs` `scanThreads`, `substrate.mjs`, `spend.mjs`, `surfaces.mjs` |
-| What it writes | Only the layout files `data/colony*.json`, written three ways: the browser PUTs them whole (`/api/state`, the sidecar's `/planets/<key>/state`); the server writes one when its first layout pass in a process places a new town; and the sidecar creates an empty planet file on that planet's first GET | `server/api.mjs`, `overlay-api.mjs`, `compass.mjs` `ensureLayouts` |
-| What hides spend | The overlay: `showSpend` shows the lines to the Owner only. The sidecar serves `/spend` and `/spend/today` to anyone who can reach it, which today is only the machine's owner | `overlay/spend.mjs` |
+| What it reads | Four Worker routes with one bearer token, plus Notion and Airtable with their own tokens (`NOTION_TOKEN`, `AIRTABLE_TOKEN`). Since U7 (2026-10-04) the adapter also listens to a fifth, the Worker's `GET /events/stream`, and drops its scan cache on each event. All of it is read on the server, never in the browser | `compass/config.mjs`, `compass/stream.mjs`, `docs/CONTRACT.md` |
+| How often | Cached on the server: substrate, spend and today's cost 60 s; room panels 5 min. The ledger scan's 5 s cache counts from when the scan finishes (since 2026-10-04; it used to count from the start, which a 6–9 s scan had already used up), and an event on the Worker's stream drops it (U7). Polls that land during a scan share it. Since 2026-10-04 every other cache does the same: one read in flight per cache key (substrate, spend, today's cost, the 5-minute panels, milestone progress), so viewers polling as a cache expires share one read | `compass.mjs` `scanThreads`, `substrate.mjs`, `spend.mjs`, `surfaces.mjs` `stale()`, `steering.mjs`, `rooms.mjs` |
+| What it writes | Only the layout files `data/colony*.json`, written three ways: the browser PUTs them whole (`/api/state`, the sidecar's `/planets/<key>/state`); the server writes one when its first layout pass in a process places a new town; and the sidecar creates an empty planet file on that planet's first GET. The sidecar's PUT needs a viewer with the `layout` capability (Owner); anyone else gets 403 (2026-10-04) | `server/api.mjs`, `overlay-api.mjs`, `compass.mjs` `ensureLayouts` |
+| What hides spend | The server first: the sidecar answers `/spend` and `/spend/today` with 403 `{error}` unless the viewer preset is Owner, before it reads the Worker (2026-10-04). The overlay's `showSpend` is the second line | `compass/overlay-api.mjs`, `overlay/spend.mjs` |
 | When Compass is down | Every read has a deadline that covers the whole answer, body included. The strip says "Compass unavailable" when the ledger scan or the substrate is failing, and shows the last thing the world saw (U37) | `compass/health.mjs` |
 
 The viewer was built for this day. `viewer.mjs` passes a viewer everywhere "so M3 can swap in an identity
@@ -41,8 +41,11 @@ Today the Owner-only rules (spend, content signatures, the surfaces each preset 
 applies them and only the owner can reach the server. Once others can reach it, every route is cut to the
 viewer's scope before it leaves the server:
 - **The sidecar (fork code):** `/world`, `/steering`, `/rooms`, `/rooms/<id>`, `/archive`, `/spend`,
-  `/spend/today` and `/planets/<key>/state`. Spend answers the Owner only, and a client sees their own town,
-  not the campus.
+  `/spend/today` and `/planets/<key>/state`. A client sees their own town, not the campus.
+  - **Done (2026-10-04):** `/spend` and `/spend/today` answer the Owner only, and a PUT to
+    `/planets/<key>/state` needs the `layout` capability. Both ask `viewerFor(req)`, so M3 changes who the viewer
+    is, not the rule. With no viewer the answer is no (`test/sidecar-gates.test.mjs`).
+  - Still to do: cut `/world`, `/steering`, `/rooms` and `/archive` to the viewer's scope.
 - **The upstream API (never edited):**
   - It has no idea of a viewer. Per-viewer thread lists need a fork-owned layer in front of it that filters by the
     signed-in scope, or a change upstream.
@@ -59,7 +62,8 @@ not local, and it is never edited:
   as today, and that layout is what the hosted world serves.
 - The server's own first layout (`ensureLayouts`, the U29 generator) still works: it is deterministic and
   needs no browser.
-- The sidecar's `/planets/<key>/state` PUT (fork code) should follow the same rule, Owner and local only.
+- The sidecar's `/planets/<key>/state` PUT (fork code) follows the same rule: it needs a local `Origin` and,
+  since 2026-10-04, a viewer with the `layout` capability (Owner).
 
 **4. Hosting is mostly fork changes, and `api.mjs` stays untouched.** The world is a Node server
 (`server/serve.mjs`: the built page, the upstream API, and the adapter's sidecar), not a static site.
@@ -80,10 +84,13 @@ Cloudflare Pages alone can only host the built page (conflict C10). What has to 
 
 **5. Reads that hold up with many viewers.**
 - The ledger scan is already shared across polls.
-- Give the substrate, spend and room caches the same single in-flight read, so that a cache expiring under
-  ten viewers is one read of Compass, not ten.
+- **Done (2026-10-04):** the substrate, spend, today's cost, the room panels, the steering panels and milestone
+  progress have the same single in-flight read, so a cache expiring under ten viewers is one read of Compass,
+  Notion or Airtable, not ten (`test/single-flight.test.mjs` counts the fetches).
 - Past a handful of people, push changes (server-sent events) instead of each browser polling
-  `/api/threads` every 15 s.
+  `/api/threads` every 15 s. The server half exists since U7: the adapter already holds one stream from the
+  Worker. Passing it on to browsers needs an endpoint on the sidecar and an overlay change; the page's own poll is
+  upstream `src/` and stays.
 - Every viewer sees the same "Compass unavailable" pill, because Compass's state is server state.
 
 **6. The tap stays where it is.** The world deep-links to the surface where an approval happens (Compass,
@@ -105,9 +112,13 @@ Compass's problem, not the world's.
 
 ## Open questions for Christoffer
 
-1. **Identity provider.** Cloudflare Access with the firm's Google accounts is the shortest path. Supabase
-   Auth (what `viewer.mjs` anticipated) puts the grants next to the ledger. One is enough; pick one.
+1. **Identity provider.** Cloudflare Access with the firm's Google accounts, grants from configuration for now —
+   decided by the developer under delegated authority, 2026-10-04, to ratify (D10 in the developer's decisions record of 2026-10-04, to be logged by Christoffer as a 🧠 Decision;
+   `docs/adr/0006`). Not in force until ratified.
+   Supabase Auth (what `viewer.mjs` anticipated) would have put the grants next to the ledger.
 2. **Where the grant table lives.** Compass (`ops_world_grants`, a migration through the U3 runner) or a
    config key. A table is easier to audit.
-3. **Does a client ever see cost?** Today spend is Owner-only by design. Showing a client their own town's
-   cost is a commercial decision, not a technical one.
+3. **Does a client ever see cost?** No — cost stays Owner-only, a client never sees it — decided by the developer
+   under delegated authority, 2026-10-04, to ratify (D10 in the developer's decisions record of 2026-10-04, to be logged by Christoffer as a 🧠 Decision; `docs/adr/0005`). Until it is ratified, the code keeps that safe default: the side port
+   answers spend to the Owner only. Note that the repo is public today and its spend fixture publishes per-client
+   figures; making it private is an owner action (D10).

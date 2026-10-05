@@ -100,7 +100,9 @@ export function createSurfaces(cfg, { fetchImpl: rawFetch = globalThis.fetch, lo
   /**
    * A cache with two lifetimes: a good answer lives `ms`; a stale one is handed back at once and refreshed behind it.
    * A failed read names its error on the fallback (an object gains `error`) and is retried after ERROR_MS, never
-   * held for the full period (an empty panel names its fix).
+   * held for the full period (an empty panel names its fix). One read in flight per key: callers that arrive while a
+   * key has never answered wait for that one read (never the fallback), and an expired key is refreshed once
+   * however many callers find it expired (docs/adr/0004).
    */
   const ERROR_MS = 30_000
   const swr = new Map() // key → { at, value, refreshing, failed }
@@ -112,6 +114,8 @@ export function createSurfaces(cfg, { fetchImpl: rawFetch = globalThis.fetch, lo
     if (hit && now() - hit.at < (hit.failed ? ERROR_MS : ms)) return hit.value
     const refresh = () => fn().then((value) => { swr.set(key, { at: now(), value, failed: false }); return value }).catch((err) => { warn(key, `${key} unavailable — ${err.message}`); const v = hit && !hit.failed ? hit.value : withError(fallback, err); swr.set(key, { at: now(), value: v, failed: true, error: err.message || String(err) }); return v })
     if (hit) {
+      // never answered yet: wait for the read already in flight rather than handing back the fallback
+      if (hit.at === 0 && hit.refreshing) return hit.refreshing
       if (!hit.refreshing) hit.refreshing = refresh().finally(() => (hit.refreshing = null))
       return hit.value
     }
@@ -123,12 +127,17 @@ export function createSurfaces(cfg, { fetchImpl: rawFetch = globalThis.fetch, lo
 
   // ── U4: 🎯 Engagement Milestones done ÷ total for the run's project, 5-min cache ──────────
   const progressCache = new Map() // dashed project id → { at, value, doneAt: newest last_edited_time of a Done milestone }
+  const progressInflight = new Map() // dashed project id → the read in flight (one per project, docs/adr/0004)
   /** One read per project per 5 min: progress (U4) and the newest time a milestone was edited while Done (U17's ✓). */
-  async function milestones(projectId) {
+  function milestones(projectId) {
     const id = dash(projectId)
-    if (!id) return { value: 0.05, doneAt: 0, list: [] }
+    if (!id) return Promise.resolve({ value: 0.05, doneAt: 0, list: [] })
     const hit = progressCache.get(id)
-    if (hit && now() - hit.at < 5 * 60_000) return hit
+    if (hit && now() - hit.at < 5 * 60_000) return Promise.resolve(hit)
+    if (!progressInflight.has(id)) progressInflight.set(id, readMilestones(id).finally(() => progressInflight.delete(id)))
+    return progressInflight.get(id)
+  }
+  async function readMilestones(id) {
     let value = 0.05
     let doneAt = 0
     let list = []

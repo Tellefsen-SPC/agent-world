@@ -1,0 +1,43 @@
+# Agent World — CI: install, test, build on every push and pull request. Read-only: no secrets, no deploy,
+# no call to Compass, Notion or Airtable (the tests use fakes and loopback servers; the one live check in
+# test/zones.test.mjs runs only when EVENTS_BEARER_TOKEN is set, and it is never set here).
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Full history: test/invariants.test.mjs diffs src/ and the never-touch files against
+      # `git merge-base HEAD upstream/main`, which needs the fork's history back to the upstream commit it is built on.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Add the upstream remote (jarrenrocks/bot-crossing) and fetch its main
+        run: |
+          git remote add upstream https://github.com/jarrenrocks/bot-crossing
+          git fetch --no-tags upstream main
+          echo "fork base: $(git merge-base HEAD upstream/main)"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - run: npm test
+
+      - run: npm run build

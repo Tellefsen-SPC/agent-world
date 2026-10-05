@@ -50,7 +50,8 @@ export const isTransientStatus = (status) => status === 502 || status === 503 ||
  * `fail(err, source)` after a failed one (source defaults to the ledger scan; the substrate is the other).
  * `snapshot()` is what GET /world serves: { ok, downSince, lastGoodAt, error } — ok null until a read has finished,
  * false while any source is failing; downSince the earliest failure still standing; lastGoodAt when the failing
- * sources last answered (null if one never has); failing the names of the sources that are down.
+ * sources last answered (null if one never has); failing the names of the sources that are down; seen, per source,
+ * when it last answered (null if never) — so the notice can say what on screen is current and what is old.
  */
 export function createHealth({ now = Date.now } = {}) {
   const sources = new Map()
@@ -65,9 +66,10 @@ export function createHealth({ now = Date.now } = {}) {
     },
     snapshot() {
       const all = [...sources.entries()]
-      if (!all.length) return { ok: null, downSince: null, lastGoodAt: null, error: null, failing: [] }
+      const seen = Object.fromEntries(all.map(([name, s]) => [name, iso(s.lastGoodAt)]))
+      if (!all.length) return { ok: null, downSince: null, lastGoodAt: null, error: null, failing: [], seen }
       const down = all.filter(([, s]) => !s.ok)
-      if (!down.length) return { ok: true, downSince: null, lastGoodAt: iso(Math.max(...all.map(([, s]) => s.lastGoodAt))), error: null, failing: [] }
+      if (!down.length) return { ok: true, downSince: null, lastGoodAt: iso(Math.max(...all.map(([, s]) => s.lastGoodAt))), error: null, failing: [], seen }
       const goods = down.map(([, s]) => s.lastGoodAt)
       return {
         ok: false,
@@ -75,6 +77,7 @@ export function createHealth({ now = Date.now } = {}) {
         lastGoodAt: goods.includes(null) ? null : iso(Math.min(...goods)),
         error: down.map(([name, s]) => (s.error.startsWith(name) ? s.error : `${name}: ${s.error}`)).join('; ').slice(0, 160),
         failing: down.map(([name]) => name),
+        seen,
       }
     },
   }

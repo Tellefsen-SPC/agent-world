@@ -3,7 +3,8 @@
  * ops_clients (Active) and ops_skills, through the Worker's GET /world/substrate (U12W) over the
  * events bearer. No Supabase URL or key on this machine — the Worker owns that access.
  *
- * Read only, cached 60 s, and the last good answer survives a failed read (warned once a minute).
+ * Read only, cached 60 s, and the last good answer survives a failed read (warned once a minute). One read at a time:
+ * callers that arrive while it is in flight share it, so a cache expiring under many viewers is one read of Compass.
  * With nothing ever read, `read()` returns EMPTY and the world is a single home planet with no
  * towns — honest, and it costs nothing.
  *
@@ -47,9 +48,15 @@ export function createSubstrate(cfg, { fetchImpl: rawFetch = globalThis.fetch, l
   let cache = { at: 0, value: null }
   let warnedAt = 0
   let last = { ok: null, error: null } // U37: the last read's outcome, for the strip's pill
+  let inflight = null // one read at a time: concurrent callers on a cold or expired cache share it (docs/adr/0004)
 
-  async function read() {
-    if (cache.value && now() - cache.at < cfg.substrateCacheMs) return cache.value
+  function read() {
+    if (cache.value && now() - cache.at < cfg.substrateCacheMs) return Promise.resolve(cache.value)
+    inflight ||= fetchOnce().finally(() => (inflight = null))
+    return inflight
+  }
+
+  async function fetchOnce() {
     try {
       const res = await fetchImpl(cfg.substrateUrl, {
         headers: { Authorization: `Bearer ${cfg.eventsBearerToken}`, Accept: 'application/json' },

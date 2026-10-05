@@ -13,13 +13,21 @@
  *   GET  /rooms/<id>               one room's panel
  *   GET  /archive                  { at, shelves, byProject, missing } — the archive shelves (U32), 5-min caches
  *   GET  /spend[?window=n&include_test=1]  the Worker's GET /world/spend object (U35), 60-s cache per window; the overlay folds it
+ *                                  — Owner only: any other viewer gets 403 {error} and the Worker is not read (ADR 0005)
  *   GET  /spend/today[?include_test=1]     today's cost per town — the Worker's GET /ledger/cost?days=1 (U37, from Compass U5)
+ *                                  — Owner only, as /spend
  *   GET  /planets/<key>/state      that planet's data/colony.<key>.json — created empty on first read
- *   PUT  /planets/<key>/state      write it (same field whitelist as api.mjs; the browser is the one writer)
+ *   PUT  /planets/<key>/state      write it (same field whitelist as api.mjs; the browser is the one writer) — only for a
+ *                                  viewer with the `layout` capability (viewer.mjs presets: Owner); anyone else gets 403 {error}
  *
  * Writes only data/colony.<key>.json for a planet the substrate names, never the home file, never
  * anything else. Same Host + Origin discipline as api.mjs: loopback hosts, and a state change needs
  * a local Origin. Nothing here touches a token.
+ *
+ * Who is asking: `viewerFor(req)` returns the viewer for this request (viewer.mjs). Today the adapter hands back its one
+ * viewer from WORLD_VIEWER_PRESET; at M3 the identity comes from the hosted world's sign-in (Cloudflare Access is proposed: ADR 0006, D10, to ratify) and only viewerFor changes.
+ * The server decides what a viewer may have — the overlay's own checks (overlay/spend.mjs showSpend) are a second line,
+ * never the only one. No viewer, or one that cannot be resolved, is refused: the gates fail closed.
  */
 import http from 'node:http'
 import fsp from 'node:fs/promises'
@@ -31,6 +39,12 @@ export const DEFAULT_DATA_DIR = process.env.BOT_CROSSING_DATA || path.join(here,
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
 const KEY = /^[a-z0-9][a-z0-9_-]{0,63}$/i
 const STATE_VERSION = 1
+
+/** Spend is the Owner's (Component 9, ES-4.13; ADR 0005) — the same rule the overlay applies (overlay/spend.mjs showSpend). */
+export const mayReadSpend = (viewer) => viewer?.preset === 'owner'
+/** The layout file is the world's only write; it needs the `layout` capability (viewer.mjs: Owner). */
+export const mayWriteLayout = (viewer) =>
+  typeof viewer?.canWriteLayout === 'function' ? viewer.canWriteLayout() === true : Array.isArray(viewer?.capabilities) && viewer.capabilities.includes('layout')
 
 const asObject = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {})
 const asArray = (v) => (Array.isArray(v) ? v : [])
@@ -85,8 +99,16 @@ function readJsonBody(req, limit = 4 * 1024 * 1024) {
  * @param descriptor () => the JSON for GET /world (may be async)
  * @param dataDir   where colony.<key>.json files live
  */
-export function createOverlayApi({ getWorld, descriptor, steering = null, rooms = null, archive = null, spend = null, dataDir = DEFAULT_DATA_DIR, log = () => {} }) {
+export function createOverlayApi({ getWorld, descriptor, steering = null, rooms = null, archive = null, spend = null, viewerFor = () => null, dataDir = DEFAULT_DATA_DIR, log = () => {} }) {
   const fileFor = (key) => path.join(dataDir, `colony.${key}.json`)
+  /** The viewer for this request, or null — a viewerFor that throws is no viewer (fail closed). */
+  const viewerOf = (req) => {
+    try {
+      return viewerFor(req) || null
+    } catch {
+      return null
+    }
+  }
 
   async function readState(key) {
     try {
@@ -148,6 +170,10 @@ export function createOverlayApi({ getWorld, descriptor, steering = null, rooms 
         return panel ? send(200, panel) : send(404, { error: 'No such room' })
       }
       if (url.pathname === '/archive' && req.method === 'GET') return archive ? send(200, await archive.shelf()) : send(404, { error: 'No archive on this adapter' })
+      if ((url.pathname === '/spend' || url.pathname === '/spend/today') && req.method === 'GET' && !mayReadSpend(viewerOf(req))) {
+        // Before any read: a viewer who may not see cost never causes a Worker read, and the refusal carries no figure.
+        return send(403, { error: 'Spend is shown to the Owner only' })
+      }
       if (url.pathname === '/spend/today' && req.method === 'GET') {
         // U37: today's cost per town, read as /spend is (60-s cache, last good kept); a town card draws its line from it
         if (!spend?.today) return send(404, { error: "No today's cost on this adapter" })
@@ -161,6 +187,8 @@ export function createOverlayApi({ getWorld, descriptor, steering = null, rooms 
 
       const m = url.pathname.match(/^\/planets\/([^/]+)\/state$/)
       if (m) {
+        // The layout is written only by a viewer who holds `layout`; checked before the planet or the body is looked at.
+        if (req.method === 'PUT' && !mayWriteLayout(viewerOf(req))) return send(403, { error: 'Only a viewer with the layout capability may move plots' })
         const key = decodeURIComponent(m[1])
         const planet = await planetFile(key)
         if (!planet) return send(404, { error: 'No such planet here (the home planet lives at /api/state)' })
