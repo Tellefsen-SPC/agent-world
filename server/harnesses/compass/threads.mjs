@@ -17,6 +17,19 @@ export const sizeBytesForProgress = (p) => Math.round(10 ** (3 + 3.5 * clamp(Num
 export const sizeBytesFor = (done, total) => sizeBytesForProgress(total > 0 ? clamp(done / total, 0.05, 1) : 0.05)
 
 const newest = (list) => (list.length ? list.reduce((a, b) => (b.at >= a.at ? b : a)) : null)
+/** The oldest by `at`; on a tie, the first in the list (the fold's order) — the in-tray's stable sort picks the same. */
+const oldest = (list) => (list.length ? list.reduce((a, b) => (b.at < a.at ? b : a)) : null)
+
+/**
+ * The gate a run's thread is about: the oldest one the viewer can tap, else the oldest one it may see. It is the in-tray's
+ * order (overlay/intray.mjs askedGateOf), so the request's title (still.mjs), the panel (panelAsk), the card's tag, the
+ * preview, Open and the Context link all name one gate. Before 2026-10-06 (confirmation 4) the title and the panel took
+ * the oldest and the rest the newest, so the panel could pair one gate's name with another's instruction.
+ */
+export function askedGate(gates, canTap = (g) => Boolean(g?.canTap)) {
+  const list = Array.isArray(gates) ? gates.filter(Boolean) : []
+  return oldest(list.filter((g) => canTap(g))) || oldest(list)
+}
 
 /**
  * What the human has to do to clear a gate, by surface. Rendered on the card as a tag
@@ -32,6 +45,8 @@ const WHAT_TO_DO = {
   content_status: ['sign in Notion', 'A content draft is waiting for your signature. Open it in Notion, read it, and if it is right move Status from In Review to Scheduled. The ? clears within a poll.'],
   class_b_gate: ['answer in session', 'This run stopped to ask you something in the session that opened it. Open takes you to that session — answer there.'],
   client_gate: ["client's to tap", 'This acceptance is addressed to the client; it is theirs to tap, not yours.'],
+  // Compass's approval layer (src/lib/approval): a proposal parked in `waiting`, decided in the Compass console
+  approval: ['approve in Compass', 'A proposal is waiting for an approver. Open it in the Compass console and approve, edit or reject it.'],
 }
 /**
  * A class_b_gate is answered where the run lives, and that depends on what started it. Seen live
@@ -80,13 +95,58 @@ export function artifactsOf(run, row) {
   return out.sort((a, b) => b.at - a.at).map(({ type, title, url, ref, system, at }) => ({ type, title, url, ref, system, at, openable: isLink(url) }))
 }
 
-export function openUrlFor(run, row, gatesOpen, { claudeProjectUrl = '' } = {}) {
+/**
+ * An approval-layer gate (Compass src/lib/approval; vendor/approval-layer `approvalGateName`) is named
+ * approval:<proposal id>, and a proposal id is a uuid: minted by crypto.randomUUID on the Worker, kept in a uuid column,
+ * matched by the Worker's /proposals/:id routes as 36 hex-and-dash characters. Only `approval:` exactly (the layer's
+ * own word, in lower case) and the canonical 8-4-4-4-12 form are taken; the hex may be either case. Anything else —
+ * no id, a path, markup, a space, a ? or #, a percent escape, a newline, `APPROVAL:` — gives no link, never a broken
+ * or injected one.
+ */
+const UUID = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+const APPROVAL_GATE = new RegExp(`^approval:(${UUID})$`)
+/** The console prefix exactly as config.mjs derives it from EVENTS_URL: https, no user, query or fragment, ending in /console/proposals. */
+const CONSOLE_PREFIX = /^https:\/\/[^\s/?#@\\]+(?:\/[^\s?#@\\]*)?\/console\/proposals$/
+
+/**
+ * The proposal's page in the Compass approvals console: <worker base>/console/proposals/<proposal id>, the id
+ * URL-encoded (a no-op for a uuid, kept so no character can ever reach the path raw) and lowercased (a uuid is
+ * case-insensitive; the layer mints lowercase). Null for a malformed gate name or a prefix that is not config.mjs's.
+ */
+export function approvalConsoleUrl(gateName, consoleProposalsUrl) {
+  const m = typeof gateName === 'string' ? APPROVAL_GATE.exec(gateName) : null
+  if (!m || typeof consoleProposalsUrl !== 'string' || !CONSOLE_PREFIX.test(consoleProposalsUrl)) return null
+  const url = `${consoleProposalsUrl}/${encodeURIComponent(m[1].toLowerCase())}`
+  // Belt and braces: CONSOLE_PREFIX already rules out another scheme, a user, a query and a fragment, and config.mjs
+  // builds the prefix from a parsed URL. What is left is a prefix of the right shape whose host or port the URL parser
+  // refuses (`https://a<b/…`, `:99999`) — handed in by some other caller; it gives no link rather than a broken one.
+  try {
+    new URL(url)
+  } catch {
+    return null
+  }
+  return url
+}
+
+/**
+ * Where one gate's Open goes. An approval-layer gate opens its own proposal in the Compass console under the Worker
+ * EVENTS_URL names, built from its gate name and the configured prefix, and nothing else. Its ref_url is never read:
+ * the approval layer writes none, so one was written by someone else — a forged host (review 1, 2026-10-06), or a
+ * console-shaped link that would point Approve at another proposal (confirmation nit 2). Every other gate: its
+ * ref_url when that is a link.
+ */
+export function gateUrl(gate, { consoleProposalsUrl = '' } = {}) {
+  if (gate?.surface === 'approval') return approvalConsoleUrl(gate.gate, consoleProposalsUrl) || ''
+  return isLink(gate?.ref_url) ? gate.ref_url : ''
+}
+
+/** Where Open lands for a run, given the gate its thread is about (askedGate), or null when it has none. */
+export function openUrlFor(run, row, gate, { claudeProjectUrl = '', consoleProposalsUrl = '' } = {}) {
   // A class_b_gate on a run that lives in a Claude session opens that session — the answer goes
   // there, not on the page the gate happens to reference (that page becomes ref.context).
-  const g0 = newest(gatesOpen)
-  if (g0 && g0.surface === 'class_b_gate' && (run.trigger === 'claude_project' || run.trigger === 'chat') && isLink(claudeProjectUrl)) return claudeProjectUrl
-  const gate = newest(gatesOpen)
-  if (isLink(gate?.ref_url)) return gate.ref_url
+  if (gate && gate.surface === 'class_b_gate' && (run.trigger === 'claude_project' || run.trigger === 'chat') && isLink(claudeProjectUrl)) return claudeProjectUrl
+  const link = gate ? gateUrl(gate, { consoleProposalsUrl }) : ''
+  if (link) return link
   const art = newest(run.artifacts.filter((a) => isLink(a.notion_url)))
   if (art) return art.notion_url
   // Ledger artifacts may be Compass references (ops_config:KEY) — only a real link can be opened.
@@ -134,7 +194,7 @@ export function linkSubagents(threads, runs) {
   }
   for (const [parentId, kids] of children) {
     const parent = byId.get(parentId)
-    parent.subruns = kids.map((k) => ({ id: k.id, title: k.title.split(' · ')[0], unread: k.unread, running: k.running, hasError: k.hasError, gitBranch: k.gitBranch }))
+    parent.subruns = kids.map((k) => ({ id: k.id, title: k.title.split(' · ')[0], unread: k.unread, running: k.running, hasError: k.hasError, waiting: waitsOnOthers(k), gitBranch: k.gitBranch }))
     // a child that failed wears ! on the map, not ? — nothing to inherit from it
     const waiting = kids.filter((k) => k.unread && !k.hasError)
     if (waiting.length && !parent.hasError && !parent.unread) {
@@ -147,6 +207,15 @@ export function linkSubagents(threads, runs) {
   }
   return threads
 }
+
+/**
+ * Runs whose thread waits on a gate, none of its gates this viewer's — kept beside the thread, server-side, never on
+ * it: a thread object is copied whole into the request the still map serves (still.mjs `...t`), and a field there told
+ * every viewer that a failed run had a hidden proposal (delta check, 2026-10-06). A WeakSet: nothing spreads, serialises
+ * or outlives it. Read only by the sub-run lists (still.mjs subrunsOf, linkSubagents), where it says "waiting".
+ */
+const WAITS_ON_OTHERS = new WeakSet()
+export const waitsOnOthers = (thread) => Boolean(thread && typeof thread === 'object' && WAITS_ON_OTHERS.has(thread))
 
 export async function toThread(run, row, viewer, surfaces, now = Date.now(), opts = {}) {
   const runningTtlMs = opts.runningTtlMs ?? 2 * 3600 * 1000
@@ -161,26 +230,40 @@ export async function toThread(run, row, viewer, surfaces, now = Date.now(), opt
     if (viewer.canTap(g)) unread = true
   }
 
+  // An approval gate this viewer cannot tap counts only in `running`: the run waits on a person, so it is not running.
+  // Nothing else of it reaches this viewer's thread — not its name (the proposal id), link, label or surface, and not
+  // that it exists, how many or since when: it is not in `gates`, `gateAt` or the "n of m left" counts (review 2 and its
+  // confirmation, 2026-10-06: a client saw "approve in Compass", then "(3 left)" and a blank entry). D2 keeps the ? off.
+  const hidden = (g) => g.surface === 'approval' && !viewer.canTap(g)
+  const shown = pending.filter((g) => !hidden(g))
+  const openShown = open.filter((g) => !hidden(g))
+
   const progress = run.project ? await surfaces.progress(run.project) : 0.05
-  const gate = newest(pending)
-  const contextUrl = gate && isLink(gate.ref_url) ? gate.ref_url : ''
+  // the one gate the title, the panel, the tag, the preview, Open and Context are about (askedGate)
+  const gate = askedGate(shown, (g) => viewer.canTap(g))
+  // An approval gate's ref_url is never the Context link: whatever it says, the layer did not write it (review 1).
+  const contextUrl = gate && gate.surface !== 'approval' && isLink(gate.ref_url) ? gate.ref_url : ''
   // A run can leave several gates (a content run leaves one per draft). Say so, or the human signs
   // one and wonders why the ? is still there — seen live 2026-09-06. Open goes to the next pending one.
-  const gateLabel = gate ? (open.length > 1 ? `${gate.gate} (${pending.length} of ${open.length} left)` : gate.gate) : ''
+  const gateLabel = gate ? (openShown.length > 1 ? `${gate.gate} (${shown.length} of ${openShown.length} left)` : gate.gate) : ''
   const art = newest(run.artifacts)
-  const openUrl = openUrlFor(run, row, pending, opts)
+  const openUrl = openUrlFor(run, row, gate, opts)
+  // Set here, on the server, when Open is the Compass console's page for the gate's proposal: the panel's "Open in
+  // Compass" reads this flag, never the link's shape (review 1).
+  const gateLink = gate ? gateUrl(gate, opts) : ''
+  const consoleOpen = gate?.surface === 'approval' && Boolean(gateLink) && openUrl === gateLink
   // Placed by client, never by actor (Annex III): its town on its company's planet, else the campus (U12).
   const at = typeof opts.place === 'function' ? opts.place(run.client) : { zone: run.client || CAMPUS, planet: '', pack: '' }
 
   // Bot Crossing never renders `preview`; the overlay panel (U11) does. For a pending gate it carries
   // the full instruction; otherwise the run's own notes, so the panel has something to say.
   const preview = gate
-    ? `${gateLabel} — ${whatToDoLong(gate, run)}${open.length > 1 ? ` This run left ${open.length} of these; ${open.length - pending.length} already done, ${pending.length} still waiting — Open takes you to the next one.` : ''}`
+    ? `${gateLabel} — ${whatToDoLong(gate, run)}${openShown.length > 1 ? ` This run left ${openShown.length} of these; ${openShown.length - shown.length} already done, ${shown.length} still waiting — Open takes you to the next one.` : ''}`
     : run.terminal === 'run_failed'
       ? failedText(run, row)
       : (typeof row?.notes === 'string' && row.notes.trim()) || art?.title || `${run.trigger || 'unknown'} run`
 
-  return {
+  const thread = {
     id: run.id,
     title: run.skill ? (gate ? `${run.skill} · ${gateLabel}` : run.skill) : 'Untitled run',
     preview,
@@ -216,10 +299,16 @@ export async function toThread(run, row, viewer, surfaces, now = Date.now(), opt
     // The skill's trust status under AUTO_RUN_POLICY (U17): the suit colour, one per run_mode. Never a person's.
     trust: typeof opts.trustOf === 'function' ? opts.trustOf(run.skill, run.runClass) : { mode: 'unknown', source: 'none' },
     // The gates still open on their surface (U14): the in-tray orders by the oldest one; each says who can tap it.
-    gates: pending.map((g) => ({ gate: g.gate, surface: g.surface, ref_url: isLink(g.ref_url) ? g.ref_url : '', at: g.at, canTap: viewer.canTap(g), what: whatToDo(g, run) })),
-    gateAt: pending.length ? Math.min(...pending.map((g) => g.at)) : 0,
-    ref: { run_id: run.id, url: openUrl, context: contextUrl && contextUrl !== openUrl ? contextUrl : '' },
+    // An approval-layer gate also carries its own link (`url`: its proposal in the Compass console, or ''), so the tray's
+    // Approve opens that proposal and nothing else, and its ref_url is never passed on; every other gate's link is its
+    // ref_url. An approval gate this viewer cannot tap is not here at all.
+    gates: shown.map((g) => ({ gate: g.gate, surface: g.surface, ref_url: g.surface !== 'approval' && isLink(g.ref_url) ? g.ref_url : '', at: g.at, canTap: viewer.canTap(g), what: whatToDo(g, run), ...(g.surface === 'approval' ? { url: gateUrl(g, opts) } : {}) })),
+    gateAt: shown.length ? Math.min(...shown.map((g) => g.at)) : 0,
+    ref: { run_id: run.id, url: openUrl, context: contextUrl && contextUrl !== openUrl ? contextUrl : '', ...(consoleOpen ? { console: true } : {}) },
   }
+  // waits on a gate and none of its gates is this viewer's: a sub-run's line says "waiting", and nothing rides on the thread
+  if (pending.length && !unread) WAITS_ON_OTHERS.add(thread)
+  return thread
 }
 
 /**

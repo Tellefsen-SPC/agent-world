@@ -26,7 +26,7 @@
  */
 import { roomForSkill, roomName, roomsOf } from './pack.mjs'
 import { notionId, airtableRef } from './surfaces.mjs'
-import { sizeBytesForProgress, whatToDo, whatToDoLong } from './threads.mjs'
+import { sizeBytesForProgress, whatToDo, whatToDoLong, askedGate, waitsOnOthers } from './threads.mjs'
 
 export const DAY_MS = 24 * 3600 * 1000
 const str = (v) => (typeof v === 'string' ? v.trim() : '')
@@ -40,6 +40,7 @@ export function verbFor(surface, gateName = '') {
     case 'content_status': return 'Sign · Content'
     case 'class_b_gate': return 'Answer · session'
     case 'client_gate': return "Client's tap · client"
+    case 'approval': return 'Approve · Compass'
     case 'system_health': return 'Resolve · System Health'
     default: return `Resolve · ${gateName || surface || 'gate'}`
   }
@@ -51,8 +52,12 @@ export function failedRecently(run, runs, now, windowMs = DAY_MS) {
   for (const r of runs.values()) if (r.skill === run.skill && r.terminal === 'run_completed' && r.lastAt > run.lastAt) return false
   return true
 }
-/** Live: started, no terminal event, activity within the TTL, no pending gate (ES-6.2). */
-export const isLive = (run, thread, now, ttlMs) => Boolean(run.started) && run.terminal == null && now - run.lastAt < ttlMs && !(thread?.gates || []).length
+/**
+ * Live: started, and the adapter's own `running` — no terminal event, activity within the TTL, no pending gate (ES-6.2).
+ * `running` is worked out from every pending gate, whoever is looking; `gates` holds only the ones this viewer may see,
+ * so it cannot say whether a run waits on a person (confirmation 1, 2026-10-06). `now` and `ttlMs` are kept for callers.
+ */
+export const isLive = (run, thread, now, ttlMs) => Boolean(run.started) && Boolean(thread?.running)
 
 /** What kind of thread this is — the test fails on a null. */
 export function kindOf(t) {
@@ -80,7 +85,7 @@ export function buildStill({ now, ttlMs = 2 * 3600 * 1000, runs, threadOf, proje
   const roomOfSkill = (skill) => roomForSkill(pack, skill, skillTypes.get(str(skill)) || '').room
   const children = new Map() // parent id → [runs]
   for (const r of runs.values()) if (r.parentId && runs.has(r.parentId)) (children.get(r.parentId) || children.set(r.parentId, []).get(r.parentId)).push(r)
-  const subrunsOf = (run) => (children.get(run.id) || []).map((c) => ({ id: c.id, title: c.skill || 'sub-run', unread: Boolean(threadOf.get(c.id)?.unread), running: isLive(c, threadOf.get(c.id), now, ttlMs), hasError: c.terminal === 'run_failed', gitBranch: threadOf.get(c.id)?.gitBranch || '' }))
+  const subrunsOf = (run) => (children.get(run.id) || []).map((c) => ({ id: c.id, title: c.skill || 'sub-run', unread: Boolean(threadOf.get(c.id)?.unread), running: isLive(c, threadOf.get(c.id), now, ttlMs), hasError: c.terminal === 'run_failed', waiting: waitsOnOthers(threadOf.get(c.id)), gitBranch: threadOf.get(c.id)?.gitBranch || '' }))
 
   const threads = []
   const runningByProject = new Map() // undashed project id → [{ id, skill, subruns, at }]
@@ -123,7 +128,9 @@ export function buildStill({ now, ttlMs = 2 * 3600 * 1000, runs, threadOf, proje
       // A ? only for a gate this viewer can tap (D2, 2026-09-05): a gate that is someone else's makes no thread for
       // this viewer — the still map has no quiet figure to give it (M1 showed one). Owner taps every surface.
       if (!t.unread) continue
-      const g = pending[0]
+      // titled by the gate the thread is about — the oldest this viewer can tap, else the oldest (threads.mjs askedGate):
+      // on a run with a client_gate and a proposal, the client's own (review 2); one gate for title and card (confirmation 4)
+      const g = askedGate(pending)
       const at = townOrRoom(root.client, roomOfSkill(run.skill))
       counts.needYou++
       threads.push(base({

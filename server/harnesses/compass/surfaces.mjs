@@ -13,6 +13,9 @@
  *                     (added 2026-09-06: Christoffer signed a draft and the ? stayed until the
  *                      20:00 poller — the poller owns the write, not the read)
  *   class_b_gate, client_gate — no surface to read; never checked.
+ *   approval — Compass's approval layer closes its own gates: deciding a proposal writes gate_passed
+ *              (same gate name) before anything else moves, and the world reads that from the ledger
+ *              (fold.mjs). Never checked here: there is nothing to read that the ledger does not say.
  *
  * M2b (U28) adds the still map's surface reads, all through the one Notion client (compass/notion.mjs,
  * data-source queries only for the ids compass/notion-sources.mjs allows) or Airtable GETs:
@@ -37,6 +40,12 @@ export const PANEL_MS = 5 * 60_000
 
 const DONE = /delivered|done|accepted|complete/i // 🎯 Engagement Milestones → Status "🟢 Delivered"
 const PA_RESOLVED = /^(approved|sent|rejected)$/i
+/**
+ * The surfaces read for a tap the ledger has not caught up with yet. `approval` is deliberately not one: the approval
+ * layer writes gate_passed itself, in the same step that decides the proposal (vendor/approval-layer service.ts
+ * `decide`: the gate event first, then the status), so the ledger is never behind the console. The world reads that
+ * gate_passed and the ? leaves within a poll; reading the console as well would be a second read of the same fact.
+ */
 const CROSS = new Set(['pending_approval', 'decision', 'content_status'])
 
 /** 32-hex or dashed → dashed uuid; '' when it is neither (project ids arrive both ways in the ledger). */

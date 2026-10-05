@@ -245,10 +245,11 @@ async function scan(now = Date.now()) {
   const trust = (skill, runClass) => trustOf(skill, runClass, policy)
 
   // The M1 shape per run (gates cross-checked on their surfaces, the instruction text, Open, artifacts, trust) —
-  // the still map (U28) reads these and emits a thread only for a run that is a request.
+  // the still map (U28) reads these and emits a thread only for a run that is a request. An approval-layer gate opens
+  // its proposal in the Compass console, under the Worker base config.mjs derives from EVENTS_URL (https only).
   const threadOf = new Map()
   for (const run of runs.values()) {
-    threadOf.set(run.id, await toThread(run, rowById.get(run.id) || null, viewer, surfaces, now, { runningTtlMs: cfg.runningTtlMs, claudeProjectUrl: cfg.claudeProjectUrl, place, trustOf: trust }))
+    threadOf.set(run.id, await toThread(run, rowById.get(run.id) || null, viewer, surfaces, now, { runningTtlMs: cfg.runningTtlMs, claudeProjectUrl: cfg.claudeProjectUrl, consoleProposalsUrl: cfg.consoleProposalsUrl, place, trustOf: trust }))
   }
 
   // U28 — the surfaces that make requests and fixtures: Active projects (5 min), Pending Approval rows and
@@ -269,7 +270,8 @@ async function scan(now = Date.now()) {
   const live = new Set(), failed = new Set()
   for (const r of runs.values()) {
     const t = threadOf.get(r.id)
-    if (r.started && r.terminal == null && now - r.lastAt < cfg.runningTtlMs && !(t?.gates || []).length) live.add(r.skill)
+    // the thread's own `running` (every pending gate, whoever looks) — not its `gates`, which hold only what the viewer may see
+    if (r.started && t?.running) live.add(r.skill)
   }
   for (const a of campusAlert(runs, now)) failed.add(a.skill) // a run_failed in 24 h with no later completion of the skill (U17's rule)
   // U16 backstop: every actor value in the window — run starts, taps, everything — for the PA's named-person check only,

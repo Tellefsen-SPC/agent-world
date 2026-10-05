@@ -106,7 +106,8 @@ Compass's problem, not the world's.
 - Signed out → the proxy's login page. The world's own ports are not reachable from outside.
 - A client grant → only that client's town: no campus rooms, no spend line, and nothing from `/spend`,
   `/spend/today`, `/steering`, `/rooms`, `POST /ask` or other towns' `/planets/<key>/state`.
-- An operator → the campus, with taps on `pending_approval` and `class_b_gate` only.
+- An operator → the campus, with taps on `pending_approval` and `class_b_gate` only. Not Compass approvals (`approval`): those
+  are the Owner's until `gate_waiting` names the approver role (2026-10-06, to ratify; `docs/CONTRACT.md`).
 - A plot dragged on the hosted world → refused, and the layout is unchanged. On the Owner's own machine it
   still moves.
 - A dead or hanging Compass → the pill on every viewer's strip, no crash (V-U37 covers one viewer).

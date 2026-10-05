@@ -329,5 +329,74 @@ Absorbed 2026-09-07 by U29 (ES-6.4): prospects are not plots; the warmth (1.0 / 
   - the bearer token anywhere in the server log.
 - **Cleanup:** the real `EVENTS_URL` back in `.env`; `scripts/zztest-seed.sh --clean`.
 
+## V-U38 — An approval-layer gate opens the Compass console
+- **Runs only once the Compass approvals console is deployed:** the `compass-console` branch of
+  `tellefsen-compass-mcp` merged, and the Worker deployed from `main`. Until then the link answers 404. This check
+  waits; none of it can be run earlier.
+- **Against production, with a real proposal that is opened and not decided.** No ZZTEST proposal can be made for this
+  check. Production refuses a `zztest-` actor on a real adapter. The preview Worker has no demo memory adapter: its
+  `wrangler.jsonc` env `preview` sets no `APPROVAL_DEMO_ADAPTER`. So the check uses a proposal that is already
+  waiting, and leaves the decision to its approver, in its own time. If none is waiting, the check waits for one.
+- **Setup:**
+  1. In `.env`, `EVENTS_URL` is the production Worker's `https` address, ending in `/events`, and there is no
+     `WORLD_VIEWER_PRESET` line (so the viewer is the Owner).
+  2. Load the tokens into your terminal:
+
+     ```
+     set -a; . ./.env; set +a
+     ```
+
+  3. List the waiting proposals. This prints each one's id, action class and the time it started waiting, and
+     nothing else:
+
+     ```
+     curl -s -m 30 -H "Authorization: Bearer $EVENTS_BEARER_TOKEN" "${EVENTS_URL%/events}/proposals?status=waiting" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{let j;try{j=JSON.parse(s)}catch{return console.log("unexpected answer")}if(!Array.isArray(j.proposals))return console.log(typeof j.error==="string"?j.error:"unexpected answer");for(const p of j.proposals)console.log(p.id,p.actionClass,p.waitingSince)})'
+     ```
+
+     An answer it does not expect prints only the Worker's error, or `unexpected answer`, and never the answer itself.
+     Pick one that started waiting less than 14 days ago (the world's window), and note its id.
+- **Do (Owner):**
+  1. Start the world with `./dev.sh`, open http://127.0.0.1:5274 and press I.
+  2. Find that proposal's row in the in-tray, select it, and read the panel.
+  3. Press Approve and read what it shows. Then press **Open the surface ↗**, and sign in with Compass Access if asked.
+     Do not decide the proposal.
+- **See (Owner):**
+  - On the map, a figure labelled **? Approve · Compass**.
+  - In the in-tray, the row's first line is the run's skill (the proposing skill, or `approval-layer`), then
+    `· <town or room>`. Its second line reads `approval:<the id> — approve in Compass`, and it has an Approve button.
+  - The panel says "A proposal is waiting for an approver. Open it in the Compass console and approve, edit or reject
+    it." Its button reads **Open in Compass**.
+  - Approve first shows **Compass · approvals console** and that line. Then a tab opens
+    `<Worker>/console/proposals/<the id>`: the same host as `EVENTS_URL`, the id you noted, and nothing after it.
+    After the sign-in, it shows that proposal.
+- **Do (client, before anyone decides the proposal):**
+  1. Stop the world with Ctrl-C.
+  2. Add this line to `.env`: `WORLD_VIEWER_PRESET=client`
+  3. Start it with `./dev.sh`, reload http://127.0.0.1:5274 and press I.
+- **See (client):** no row for the proposal, no **? Approve · Compass** figure, and the proposal's id nowhere on
+  screen, including in a selected figure's panel. Then stop the world, remove the `WORLD_VIEWER_PRESET=client` line
+  from `.env`, and start it again with `./dev.sh`.
+- **Later, once the proposal is decided** by its approver in the normal course of work (not for this check): within one
+  poll, about 15 s, its row and figure are gone. To see that the approval layer recorded the decision, and the world
+  wrote nothing, run these two commands (after `set -a; . ./.env; set +a`), putting the id you noted in the first:
+
+  ```
+  ID=<the proposal id>
+  ```
+
+  ```
+  curl -s -m 30 -H "Authorization: Bearer $EVENTS_BEARER_TOKEN" "${EVENTS_URL%/events}/ledger/scan?since=$(date -u -v-14d +%Y-%m-%dT00:00:00Z)" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{let j;try{j=JSON.parse(s)}catch{return console.log("unexpected answer")}if(!Array.isArray(j.events))return console.log(typeof j.error==="string"?j.error:"unexpected answer");const g="approval:"+process.argv[1];for(const e of j.events)if(e&&e.payload&&e.payload.gate===g)console.log(e.at,e.event_type,e.skill,e.payload.result||"")})' "$ID"
+  ```
+
+  It prints one line per event for that gate: a `gate_waiting`, then a `gate_passed` with the result (`approved`,
+  `edited` or `rejected`). Both are filed by the approval layer, skill `approval-layer`.
+- **Fail looks like:**
+  - no row or figure for the Owner, or a row with no Approve;
+  - a link to another host, an `http://` link, or anything after the id;
+  - a 404 once the console is deployed;
+  - under the client preset, the row, the figure, or the proposal's id anywhere;
+  - once decided, a `?` that stays after the next poll, or a `gate_passed` that is not the approval layer's.
+- **Cleanup:** check that `.env` has no `WORLD_VIEWER_PRESET=client` line. Nothing else: the check writes nothing.
+
 ## Cadence and evidence
 Per unit: the check above, minutes each. Per milestone: when U8 verifies, re-run V-U1 … V-U7 and V-U9 in one sitting (the regression pass) before `milestone-close` flips M1 to Done. **Regression before milestone-close M2:** re-run V-U1–V-U6, V-U9–V-U11, V-U12W and V-U12–V-U20 in one sitting. **M2b batch sitting (2026-09-07):** first the re-based V-U12, V-U13, V-U14, V-U15, V-U18, then V-U28 … V-U34, then V-U35 (Sitting S, Part V). Evidence per unit in the Notion unit table: the date, plus a link — the Compass `run_id` for V-U2, a screenshot for V-U3/V-U6, the recording for V-U8.

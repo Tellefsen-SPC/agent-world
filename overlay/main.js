@@ -51,8 +51,8 @@ import { createLabel, Plot, PLOT_PALETTE, hashString, worldToHex } from '../src/
 import { artifactRows, BubbleTracker, newestArtifactAt, bubbleEligible } from './artifacts.mjs'
 import { shelfSections, projectTab } from './archive.mjs'
 import { foldSpend, spendLineFor, estLineFor, townLines, todayLineFor, todayIsCurrent, showSpend, summary as spendSummary } from './spend.mjs'
-import { intrayRows, nextRow, withHands } from './intray.mjs'
-import { ApproveTracker, approveIntent } from './approve.mjs'
+import { intrayRows, nextRow, withHands, panelAsk, subrunState } from './intray.mjs'
+import { ApproveTracker, approveIntent, openLabel } from './approve.mjs'
 import { mayAsk, subjectsFor, pickSubject, requestBody, initialPa, paReduce, panelModel, MAX_QUESTION } from './pa.mjs'
 
 const LABEL = {
@@ -270,7 +270,6 @@ const ago = (ms) => {
 const shortModel = (m) => String(m || '').replace(/^claude-/, '')
 /** The adapter encodes milestone progress as sizeBytes = 10^(3 + 3.5·p); this is the exact inverse. */
 const progressOf = (bytes) => Math.max(0, Math.min(1, (Math.log10(Math.max(1, Number(bytes) || 1)) - 3) / 3.5))
-const openLabel = (url) => (!url ? 'Nothing to open' : /airtable\.com/.test(url) ? 'Open in Airtable' : /notion\.(com|so)/.test(url) ? 'Open in Notion' : /claude\.ai/.test(url) ? 'Open the Claude Project' : 'Open')
 
 /** The thread for the selected figure — the live one from the roster, else the agent's own copy. */
 function selection() {
@@ -367,12 +366,12 @@ function render(sel) {
   // M2b: a request's title is badge · verb · surface and its skill rides on `skill`; the gate's name is in the tray row / preview.
   const parts = String(thread.title || '').split(' · ')
   const skill = thread.skill || parts[0]
-  const gate = thread.kind === 'request' ? (thread.gates?.[0]?.gate || '') : parts.slice(1).join(' · ')
+  // the gate and its full instruction: for a request, the first gate this viewer can tap (overlay/intray.mjs panelAsk)
+  const { gate, instruction } = panelAsk(thread)
   const status = agent.status || 'idle'
   const url = thread.ref?.url
   // The adapter puts "<gate> — <full instruction>" in preview while a gate is pending; the run's notes otherwise.
   const preview = String(thread.preview || '')
-  const instruction = gate && preview.startsWith(gate + ' — ') ? preview.slice(gate.length + 3) : ''
   // A town that wears its own pack (world_branding.pack, carried on the thread) speaks it here: its nouns, its rooms.
   const p = packOf(thread.pack)
   const room = roomOf(thread, p)
@@ -417,7 +416,7 @@ function render(sel) {
   const subs = Array.isArray(thread.subruns) ? thread.subruns : []
   const subBlock = subs.length
     ? `<div class="arts"><b>${subs.length} sub-run${subs.length === 1 ? '' : 's'}</b>${subs
-        .map((s) => `<div class="sub" data-sub="${esc(s.id)}" title="select this sub-run"><span>${esc(s.title)}</span><span class="st">${s.hasError ? '! failed' : s.unread ? '? ' + esc(s.gitBranch || 'waiting on you') : s.running ? '⚒ working' : 'done'}</span></div>`)
+        .map((s) => `<div class="sub" data-sub="${esc(s.id)}" title="select this sub-run"><span>${esc(s.title)}</span><span class="st">${esc(subrunState(s))}</span></div>`)
         .join('')}</div>`
     : ''
   panel.innerHTML = `
@@ -428,7 +427,7 @@ function render(sel) {
     ${subBlock}
     ${artBlock}
     <div class="row"><span class="hint">Enter opens · N flies to the next ? · ${thread.unread ? 'A is blocked on a waiting run' : 'A hides from this view only'}${paAllowed() ? ' · P asks the PA' : ''}</span>
-      <span>${thread.ref?.context ? `<a class="ctx" href="${esc(thread.ref.context)}" target="_blank" rel="noopener">Context ↗</a>` : ''}${paAllowed() ? '<button class="ok" id="aw-ask">Ask the PA</button> ' : ''}${cardRow?.url ? '<button class="ok" id="aw-approve">Approve</button> ' : ''}<button id="aw-open" ${url ? '' : 'disabled'}>${esc(openLabel(url))}</button></span></div>`
+      <span>${thread.ref?.context ? `<a class="ctx" href="${esc(thread.ref.context)}" target="_blank" rel="noopener">Context ↗</a>` : ''}${paAllowed() ? '<button class="ok" id="aw-ask">Ask the PA</button> ' : ''}${cardRow?.url ? '<button class="ok" id="aw-approve">Approve</button> ' : ''}<button id="aw-open" ${url ? '' : 'disabled'}>${esc(openLabel(url, thread.ref?.console))}</button></span></div>`
   panel.classList.add('on')
   panel.querySelector('#aw-open')?.addEventListener('click', () => {
     if (url) window.open(url, '_blank', 'noopener')

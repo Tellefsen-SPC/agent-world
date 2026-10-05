@@ -20,8 +20,16 @@ export const SURFACE_NAME = {
   content_status: 'Notion · ✍️ Content',
   class_b_gate: 'the session that asked',
   client_gate: "the client's surface",
+  approval: 'Compass · approvals console',
 }
 export const surfaceName = (surface) => SURFACE_NAME[surface] || surface || 'its surface'
+
+/**
+ * The Open button's label, named by where it lands (the selection panel, overlay/main.js). "Open in Compass" only when
+ * the server says Open is the Compass console's page for a proposal (`thread.ref.console`, compass/threads.mjs) — never
+ * from the link's shape, which anyone who can write an event could copy onto another host (review 1, 2026-10-06).
+ */
+export const openLabel = (url, console = false) => (!url ? 'Nothing to open' : console === true ? 'Open in Compass' : /airtable\.com/.test(url) ? 'Open in Airtable' : /notion\.(com|so)/.test(url) ? 'Open in Notion' : /claude\.ai/.test(url) ? 'Open the Claude Project' : 'Open')
 
 /** What Approve will show before the surface opens: the instruction and where it is going. */
 export function approveIntent(row) {

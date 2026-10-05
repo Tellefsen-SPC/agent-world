@@ -10,8 +10,14 @@
  * — after the permission model was drafted). It is Owner-only by design: the signature is
  * Christoffer's own act on the Content row, and the status poller resolves it. Seen live
  * 2026-09-06: without it, a real content-agent draft waiting for signature rendered with no `?`.
+ *
+ * approval is Compass's approval layer (src/lib/approval, 2026-10-06): a proposal waiting for an approver is a
+ * gate_waiting with surface "approval" and gate "approval:<proposal id>", decided in the Compass console. Owner-only
+ * for now (decided 2026-10-06, to ratify): a ? goes only to someone who can resolve it (D2), the layer's approver role
+ * defaults to Owner, and gate_waiting does not say which role a proposal needs — an operator would hold ?s the console
+ * refuses them. Revisit once gate_waiting carries the approver role.
  */
-const ALL_SURFACES = ['pending_approval', 'class_b_gate', 'decision', 'client_gate', 'content_status']
+export const ALL_SURFACES = ['pending_approval', 'class_b_gate', 'decision', 'client_gate', 'content_status', 'approval']
 
 export const PRESETS = {
   owner: { scope: 'campus', capabilities: ['view', 'tap', 'ratify', 'ask', 'layout', 'admin'], surfaces: ALL_SURFACES },
