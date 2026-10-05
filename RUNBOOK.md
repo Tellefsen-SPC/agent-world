@@ -34,7 +34,7 @@ Open http://127.0.0.1:5274. Stop it with Ctrl-C in that terminal.
 
 - Use `./dev.sh`, not `npm run dev`. Plain `npm run dev` does not read `.env`, so the world comes up empty.
 - To see what the adapter is doing, start it with its log on: `DEBUG=world ./dev.sh`.
-- A **? Approve · Compass** request is a proposal from Compass's approval layer: Approve and **Open in Compass** open it in the Compass approvals console (`<Worker>/console/proposals/<id>`), which asks you to sign in with Compass Access first; decide it there and the `?` clears on the next poll.
+- A **? Approve · Compass** request (Owner only) is a proposal from Compass's approval layer: Approve and **Open in Compass** open it in the Compass approvals console (`<Worker>/console/proposals/<id>`), which asks you to sign in with Compass Access first; decide it there and the `?` clears on the next poll.
 - To check the world's own view of Compass, while it runs:
 
 ```
@@ -49,13 +49,13 @@ Compass early because something changed.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `EVENTS_URL` | — (required) | The Compass Worker's address, ending in `/events`. Every Compass read is worked out from it. |
+| `EVENTS_URL` | — (required) | The Compass Worker's address, ending in `/events`. Every Compass read is worked out from it, and so is the Compass console link. An `http` address, such as a local Worker, reads fine but leaves every **? Approve · Compass** request with nothing to open. |
 | `EVENTS_BEARER_TOKEN` | — (required, secret) | The Worker's events token. Reads the ledger, the client map, spend and the live stream. |
 | `NOTION_TOKEN` | — (secret) | Reads milestones, Decisions and the room panels' Notion sources. |
 | `AIRTABLE_TOKEN` | — (secret) | Reads Pending Approval, the pipeline and finance. |
 | `AIRTABLE_BASE_ID` | `appixWl8C3bogLsvp` | The HQ base. |
 | `CLAUDE_PROJECT_URL` | — | Where Open goes for a chat run. |
-| `WORLD_VIEWER_PRESET` | `owner` | Who is looking: `owner`, `operator`, `viewer`, `client` or `prime`. Only `owner` sees spend, asks the PA, and may save plot moves on planets other than home. |
+| `WORLD_VIEWER_PRESET` | `owner` | Who is looking: `owner`, `operator`, `viewer`, `client` or `prime`. Only `owner` sees spend, asks the PA, holds the Compass approvals, and may save plot moves on planets other than home. |
 | `WORLD_WINDOW_DAYS` | `14` | How far back the ledger is read. |
 | `WORLD_RUNNING_TTL_HOURS` | `2` | A run with no activity for this long stops counting as running. |
 | `WORLD_TENANT` | `tellefsen` | The tenant name the viewer carries. |

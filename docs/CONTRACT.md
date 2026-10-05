@@ -1,6 +1,6 @@
 # Contract v1 — the product boundary (U34, ES-6.9)
 
-Agent World is a renderer over five documents (four Worker reads and the pack), plus one signal (the Worker's event stream, which tells the adapter *when* to read again and is never itself rendered) and one question (the PA's `POST /ask`, since 2026-10-05). Everything it shows is read from the five documents or answered by the PA; nothing it does writes to any of them. The six JSON Schemas under `spec/` are the boundary between the Compass Worker, the packs and this fork — change them with a version, never quietly.
+Agent World is a renderer over five documents (four Worker reads and the pack), plus one signal (the Worker's event stream, which tells the adapter *when* to read again and is never itself rendered) and one question (the PA's `POST /ask`, since 2026-10-05). Everything it shows is read from the five documents or answered by the PA; nothing it does writes to any of them. The six JSON Schemas under `spec/` are the boundary between the Compass Worker, the packs and this fork. Change them openly, never quietly. A new enum value, or a new optional key, is added in place, dated in the schema. A removal, or a change of what a value means, bumps the version (decided 2026-10-06, to ratify).
 
 | Document | Schema | Producer | Consumer | Guard |
 |---|---|---|---|---|
@@ -14,30 +14,45 @@ Agent World is a renderer over five documents (four Worker reads and the pack), 
 
 The adapter reads exactly five Worker routes — `/ledger/scan`, `/world/substrate`, `/world/spend` (ES-4.13, 2026-09-08), `/ledger/cost` (U37, 2026-10-04) and `/events/stream` (U7, 2026-10-04) — and asks one, `/ask` (U16, 2026-10-05): six in all, and `npm test` fails if `server/harnesses/compass.mjs` or `server/harnesses/compass/**` names any other (`/actions`, `/events`, `/ledger/<anything else>`). `/ask` is fetched only from `compass/ask.mjs`, to `cfg.askUrl` verbatim, and it is the adapter's one POST to the Worker: the invariant "the adapter never writes" allows exactly that line, because the ask's events and ledger row are the Worker's record of its own model call, not a write by the world. Every Worker URL is derived from `EVENTS_URL` in `compass/config.mjs` and nowhere else; the stream URL is requested as derived, with no query (the resume point travels in the `Last-Event-ID` header). `WORLD_STREAM=0` switches the stream off; the world then runs on its polls alone, as it did before U7. The seed script may `POST /events` and `DELETE /ledger/zztest`; it is a test fixture, not the adapter. Notion and Airtable are read with GETs and the one guarded data-source query (`compass/notion.mjs`, ids in `compass/notion-sources.mjs`).
 
-**Approval-layer gates and the Compass console (2026-10-06).** Compass's approval layer (`src/lib/approval`,
-`vendor/approval-layer`) writes `gate_waiting` and `gate_passed` with `payload.surface: "approval"` and
-`payload.gate: "approval:<proposal id>"` (plus `payload.ref`, the same id, and no `ref_url`).
-`spec/ledger-scan.v1.json` names the surface since 2026-10-06, an additive change in place.
+**Approval-layer gates and the Compass console (2026-10-06; review round the same day).** Compass's approval layer
+(`src/lib/approval`, `vendor/approval-layer`) writes `gate_waiting` and `gate_passed` with `payload.surface: "approval"`
+and `payload.gate: "approval:<proposal id>"` (plus `payload.ref`, the same id, and no `ref_url`).
+`spec/ledger-scan.v1.json` names the surface since 2026-10-06, a new enum value added in place (see the versioning
+rule above).
 - **The deep-link.** Such a gate opens `<worker base>/console/proposals/<proposal id>`, the proposal's page in the
   Compass approvals console (Compass branch `compass-console`).
   - `<worker base>` is `EVENTS_URL` with its `/events` tail removed, as for every route. `compass/config.mjs` derives
     the prefix as `consoleProposalsUrl`, and only from an `https` `EVENTS_URL` ending in `/events` with no user,
-    password, query or fragment. Otherwise there is no prefix and no link.
-  - `<proposal id>` is the part after `approval:`. It must be a uuid in the canonical 8-4-4-4-12 hex form: the layer
-    mints it with `crypto.randomUUID`, and the `proposals` table's id is a `uuid` column. It is lowercased and
-    URL-encoded (`compass/threads.mjs` `approvalConsoleUrl`).
-  - Any other name gives no link: `approval:`, a path, markup, a space, `?`, `#`, a percent escape. The `?` stays,
-    with nothing to open.
-- **A `ref_url` still wins.** A gate that carries a `ref_url` that is a link opens it, as every gate does. The console
-  is the fallback for `approval` only. The thread's `gates[]` entry for an approval gate carries the link as `url`,
-  so the in-tray's Approve opens that gate's own proposal or nothing.
+    password, query or fragment. Otherwise there is no prefix and no link: an `http` `EVENTS_URL`, such as a local
+    Worker, leaves every approval gate with nothing to open.
+  - `<proposal id>` is the part after `approval:`, the layer's own word in lower case. It must be a uuid in the
+    canonical 8-4-4-4-12 hex form, the hex in either case: the layer mints it with `crypto.randomUUID`, and the
+    `proposals` table's id is a `uuid` column. It is lowercased and URL-encoded (`compass/threads.mjs`
+    `approvalConsoleUrl`).
+  - Any other name gives no link: `approval:`, `APPROVAL:`, a path, markup, a space, `?`, `#`, a percent escape. The
+    `?` stays, with nothing to open.
+- **Only that console, whatever the event says.** An approval gate opens the console under the Worker `EVENTS_URL`
+  names, and nothing else. It takes a `ref_url` only when that is itself the console's link, the prefix, `/` and a
+  uuid, rebuilt by `approvalConsoleUrl`; else it uses the link its name gives. Any other `ref_url` is dropped, whatever
+  host it names: the layer writes none, so one was written by someone else. An approval gate's `ref_url` is never
+  the Context link and is never passed on in `gates[]`. Every other surface keeps its rule, a `ref_url` that is a link.
+  The thread's `gates[]` entry for an approval gate carries its link as `url`, so the in-tray's Approve opens that
+  gate's own proposal or nothing. `ref.console: true` is set on the server when Open is that console link, and the
+  panel says **Open in Compass** on that flag alone, never because a link looks like the console's.
 - **A link, never a read.** The console is a page for a person, behind a Compass Access sign-in. The adapter never
-  fetches it, and it is not one of the six routes above. The contract guard fails a fetch of `consoleProposalsUrl`,
-  or a rebuild of it, like any Worker URL that is not a read.
+  fetches it, and it is not one of the six routes above. The contract guard fails a fetch or a request of the
+  `consoleProposalsUrl` field, or of `approvalConsoleUrl(…)` or `gateUrl(…)` written in the call, and a rebuild of
+  the field. A text check cannot follow a link through a variable; the harness test asserts at run time that nothing
+  fetches the console.
 - **No cross-check.** The layer writes `gate_passed`, with the same gate name, when a proposal is decided. That is the
   first step of `decide`, before the proposal's status moves. The `?` leaves within a poll of it (`fold.mjs`), and
   `surfaces.mjs` never reads the console.
-- **Who sees it.** The Owner and operator presets tap `approval`. Client, prime and viewer never see it.
+- **Who sees it: the Owner only (decided 2026-10-06, to ratify).** A `?` goes only to someone who can resolve it (D2).
+  The layer's approver role defaults to Owner, and `gate_waiting` does not say which role a proposal needs, so an
+  operator would hold `?`s the console refuses them. Revisit once `gate_waiting` carries the approver role. Operator,
+  client, prime and viewer never tap it. A viewer who cannot tap an approval gate gets no trace of it beyond a blank
+  entry in `gates[]`, which keeps the run off `running`: no name, link, label, surface or title, on a mixed run too
+  (a run with its own `client_gate` shows the client that gate alone).
 
 Re-capture the three live responses after a Worker deploy with `scripts/capture-contract.sh` (`--substrate-only`, `--spend-only` for one of them) (bearer from `.env`; actors scrubbed, notes trimmed) and re-run `npm test`.
 
@@ -47,7 +62,7 @@ Re-capture the three live responses after a Worker deploy with `scripts/capture-
 - Every town other than `ZZTEST…` and `internal` becomes `town-1`, `town-2` …, the same stand-in in `by_town` and `by_town_day`.
 - A value of the wrong shape at a known path is replaced by `redacted` and named on the terminal.
 - A key the contract does not have, at any depth, refuses the capture. Nothing is written, and the path is named. The answer has changed, and a person decides what the new key may carry.
-- Values are never printed. Run `npm test`: the live check then runs instead of skipping. Commit the fixture. A 404 means U5 is not live: the script says so and writes nothing. `test/capture.test.mjs` runs the mode against a local stand-in, never the real Worker. A captured response that no longer validates is a contract change: bump the schema's version and say so in `claude-progress.txt`.
+- Values are never printed. Run `npm test`: the live check then runs instead of skipping. Commit the fixture. A 404 means U5 is not live: the script says so and writes nothing. `test/capture.test.mjs` runs the mode against a local stand-in, never the real Worker. A captured response that no longer validates is a contract change, and it is said in `claude-progress.txt`. A new enum value or optional key is added to the schema in place, dated there. A removal, or a change of what a value means, bumps the schema's version.
 
 Vocabulary: ES-6.9 says *nouns* and *mirror*; the pack files and `spec/pack.v1.json` carry them as `names` and `mirrors` (the keys the packs have used since U12). Same things, older names.
 
