@@ -19,6 +19,24 @@ const portOf = (v, d) => {
   return Number.isInteger(n) && n >= 1 && n <= 65_535 ? n : d
 }
 
+/**
+ * The Compass approvals console's proposal pages (Worker branch compass-console): <worker base>/console/proposals, where
+ * <worker base> is EVENTS_URL with its /events tail removed, as for every route here. A page a human opens in the
+ * browser, never a read: the adapter links to it (threads.mjs approvalConsoleUrl) and never fetches it. Only an https
+ * EVENTS_URL ending in /events, with no user, password, query or fragment, gives one; anything else gives '' and an
+ * approval gate then gets no link.
+ */
+function consoleProposalsUrlOf(eventsUrl) {
+  let u
+  try {
+    u = new URL(eventsUrl)
+  } catch {
+    return ''
+  }
+  if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash || !/\/events$/.test(u.pathname)) return ''
+  return `${u.origin}${u.pathname.replace(/\/events$/, '')}/console/proposals`
+}
+
 export function loadConfig(env = process.env) {
   const eventsUrl = (env.EVENTS_URL || '').replace(/\/+$/, '')
   return {
@@ -52,6 +70,8 @@ export function loadConfig(env = process.env) {
     askUrl: /\/events$/.test(eventsUrl) ? eventsUrl.replace(/\/events$/, '/ask') : '',
     askBearerToken: String(env.WORLD_ASK_BEARER || '').trim() || env.EVENTS_BEARER_TOKEN || '',
     askTimeoutMs: Math.min(num(env.WORLD_ASK_TIMEOUT_MS, ASK_TIMEOUT_MS), MAX_ASK_TIMEOUT_MS),
+    /** Where an approval-layer gate opens (surface "approval"): the console's proposal pages, https only — a link, never a read. */
+    consoleProposalsUrl: consoleProposalsUrlOf(eventsUrl),
     /**
      * The world's own page port (Vite and `npm start` listen on PORT, default 5274). The side port answers the PA only
      * for a page from this port on a loopback host — any other local page is refused (review nit 6, 2026-10-05).

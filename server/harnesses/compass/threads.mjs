@@ -82,13 +82,54 @@ export function artifactsOf(run, row) {
   return out.sort((a, b) => b.at - a.at).map(({ type, title, url, ref, system, at }) => ({ type, title, url, ref, system, at, openable: isLink(url) }))
 }
 
-export function openUrlFor(run, row, gatesOpen, { claudeProjectUrl = '' } = {}) {
+/**
+ * An approval-layer gate (Compass src/lib/approval; vendor/approval-layer `approvalGateName`) is named
+ * approval:<proposal id>, and a proposal id is a uuid: minted by crypto.randomUUID on the Worker, kept in a uuid column,
+ * matched by the Worker's /proposals/:id routes as 36 hex-and-dash characters. Only the canonical 8-4-4-4-12 form is
+ * taken. Anything else — no id, a path, markup, a space, a ? or #, a percent escape, a newline — gives no link, never a
+ * broken or injected one.
+ */
+const APPROVAL_GATE = /^approval:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i
+/** The console prefix exactly as config.mjs derives it from EVENTS_URL: https, no user, query or fragment, ending in /console/proposals. */
+const CONSOLE_PREFIX = /^https:\/\/[^\s/?#@\\]+(?:\/[^\s?#@\\]*)?\/console\/proposals$/
+
+/**
+ * The proposal's page in the Compass approvals console: <worker base>/console/proposals/<proposal id>, the id
+ * URL-encoded (a no-op for a uuid, kept so no character can ever reach the path raw) and lowercased (a uuid is
+ * case-insensitive; the layer mints lowercase). Null for a malformed gate name or a prefix that is not config.mjs's.
+ */
+export function approvalConsoleUrl(gateName, consoleProposalsUrl) {
+  const m = typeof gateName === 'string' ? APPROVAL_GATE.exec(gateName) : null
+  if (!m || typeof consoleProposalsUrl !== 'string' || !CONSOLE_PREFIX.test(consoleProposalsUrl)) return null
+  const url = `${consoleProposalsUrl}/${encodeURIComponent(m[1].toLowerCase())}`
+  try {
+    const u = new URL(url)
+    if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash) return null
+  } catch {
+    return null
+  }
+  return url
+}
+
+/**
+ * Where one gate's Open goes. Its ref_url when that is a link — the rule for every gate. Else, for an approval-layer
+ * gate, which carries its proposal id in its name rather than a ref_url, the proposal's page in the Compass console.
+ * Else nothing.
+ */
+export function gateUrl(gate, { consoleProposalsUrl = '' } = {}) {
+  if (isLink(gate?.ref_url)) return gate.ref_url
+  if (gate?.surface === 'approval') return approvalConsoleUrl(gate.gate, consoleProposalsUrl) || ''
+  return ''
+}
+
+export function openUrlFor(run, row, gatesOpen, { claudeProjectUrl = '', consoleProposalsUrl = '' } = {}) {
   // A class_b_gate on a run that lives in a Claude session opens that session — the answer goes
   // there, not on the page the gate happens to reference (that page becomes ref.context).
   const g0 = newest(gatesOpen)
   if (g0 && g0.surface === 'class_b_gate' && (run.trigger === 'claude_project' || run.trigger === 'chat') && isLink(claudeProjectUrl)) return claudeProjectUrl
   const gate = newest(gatesOpen)
-  if (isLink(gate?.ref_url)) return gate.ref_url
+  const link = gate ? gateUrl(gate, { consoleProposalsUrl }) : ''
+  if (link) return link
   const art = newest(run.artifacts.filter((a) => isLink(a.notion_url)))
   if (art) return art.notion_url
   // Ledger artifacts may be Compass references (ops_config:KEY) — only a real link can be opened.
@@ -218,7 +259,9 @@ export async function toThread(run, row, viewer, surfaces, now = Date.now(), opt
     // The skill's trust status under AUTO_RUN_POLICY (U17): the suit colour, one per run_mode. Never a person's.
     trust: typeof opts.trustOf === 'function' ? opts.trustOf(run.skill, run.runClass) : { mode: 'unknown', source: 'none' },
     // The gates still open on their surface (U14): the in-tray orders by the oldest one; each says who can tap it.
-    gates: pending.map((g) => ({ gate: g.gate, surface: g.surface, ref_url: isLink(g.ref_url) ? g.ref_url : '', at: g.at, canTap: viewer.canTap(g), what: whatToDo(g, run) })),
+    // An approval-layer gate also carries its own link (`url`: its ref_url, else its proposal in the Compass console,
+    // else ''), so the tray's Approve opens that proposal and nothing else; every other gate's link is its ref_url.
+    gates: pending.map((g) => ({ gate: g.gate, surface: g.surface, ref_url: isLink(g.ref_url) ? g.ref_url : '', at: g.at, canTap: viewer.canTap(g), what: whatToDo(g, run), ...(g.surface === 'approval' ? { url: gateUrl(g, opts) } : {}) })),
     gateAt: pending.length ? Math.min(...pending.map((g) => g.at)) : 0,
     ref: { run_id: run.id, url: openUrl, context: contextUrl && contextUrl !== openUrl ? contextUrl : '' },
   }

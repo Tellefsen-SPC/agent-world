@@ -168,7 +168,9 @@ test('U34/U35/U37/U7/U16: the adapter reads only /ledger/scan, /world/substrate,
   const files = [path.join(root, 'server/harnesses/compass.mjs'), ...walk(path.join(root, 'server/harnesses/compass'))]
   const allowed = new Set(['/ledger/scan', '/world/substrate', '/world/spend', '/ledger/cost', '/events/stream', '/ask'])
   assert.equal(allowed.size, 6, 'six Worker routes: five reads and the PA')
-  const WORKER_FIELD = /ledgerUrl|substrateUrl|spendUrl|ledgerCostUrl|streamUrl|askUrl|eventsUrl/
+  // consoleProposalsUrl (2026-10-06) is the Compass console's proposal pages: a link handed to the human, never a read —
+  // so a fetch or a request of it fails below like any Worker URL that is not one of the reads
+  const WORKER_FIELD = /ledgerUrl|substrateUrl|spendUrl|ledgerCostUrl|streamUrl|askUrl|consoleProposalsUrl|eventsUrl/
   const hits = []
   for (const f of files) {
     const text = fs.readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
@@ -180,7 +182,7 @@ test('U34/U35/U37/U7/U16: the adapter reads only /ledger/scan, /world/substrate,
     // a Worker URL is built in config.mjs and nowhere else: no other file may touch eventsUrl or assemble one from a Worker field
     if (path.basename(f) !== 'config.mjs') {
       assert.ok(!/eventsUrl/.test(text), `${path.relative(root, f)} references eventsUrl — Worker URLs are config.mjs's to derive`)
-      assert.ok(!/(ledgerUrl|substrateUrl|spendUrl|ledgerCostUrl|streamUrl|askUrl)\s*\.\s*(replace|slice|split|concat)\(/.test(text), `${path.relative(root, f)} rebuilds a Worker URL from a derived field`)
+      assert.ok(!/(ledgerUrl|substrateUrl|spendUrl|ledgerCostUrl|streamUrl|askUrl|consoleProposalsUrl)\s*\.\s*(replace|slice|split|concat)\(/.test(text), `${path.relative(root, f)} rebuilds a Worker URL from a derived field`)
       // U37: every Worker URL assembled anywhere — whatever it is then handed to (a variable, a retry, a cache) — is one of the reads
       // (U7: the stream URL is never assembled: it is requested verbatim, the resume point travels in Last-Event-ID)
       // (U16: the ask URL is never assembled either: the question travels in the POST body)

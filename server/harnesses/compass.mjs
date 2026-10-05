@@ -245,10 +245,11 @@ async function scan(now = Date.now()) {
   const trust = (skill, runClass) => trustOf(skill, runClass, policy)
 
   // The M1 shape per run (gates cross-checked on their surfaces, the instruction text, Open, artifacts, trust) —
-  // the still map (U28) reads these and emits a thread only for a run that is a request.
+  // the still map (U28) reads these and emits a thread only for a run that is a request. An approval-layer gate opens
+  // its proposal in the Compass console, under the Worker base config.mjs derives from EVENTS_URL (https only).
   const threadOf = new Map()
   for (const run of runs.values()) {
-    threadOf.set(run.id, await toThread(run, rowById.get(run.id) || null, viewer, surfaces, now, { runningTtlMs: cfg.runningTtlMs, claudeProjectUrl: cfg.claudeProjectUrl, place, trustOf: trust }))
+    threadOf.set(run.id, await toThread(run, rowById.get(run.id) || null, viewer, surfaces, now, { runningTtlMs: cfg.runningTtlMs, claudeProjectUrl: cfg.claudeProjectUrl, consoleProposalsUrl: cfg.consoleProposalsUrl, place, trustOf: trust }))
   }
 
   // U28 — the surfaces that make requests and fixtures: Active projects (5 min), Pending Approval rows and
