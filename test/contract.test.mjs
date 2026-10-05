@@ -41,6 +41,11 @@ test('U34: spec/ledger-scan.v1.json validates the captured GET /ledger/scan, and
   assert.deepEqual(validate(schema, read('test/fixtures/m2b-ledger-scan.live.json')), [])
   assert.ok(validate(schema, { events: [{ id: 'x', run_id: 'r', at: 't', event_type: 'made_up', skill: 's' }], rows: [] }).some((e) => /event_type/.test(e)))
   assert.ok(validate(schema, { events: [] }).some((e) => /rows/.test(e)))
+  // 2026-10-06: Compass's approval layer writes gate_waiting / gate_passed with surface "approval" and gate
+  // "approval:<proposal id>" — the next capture holding one must validate; a surface nobody named still does not
+  const gate = (surface) => ({ events: [{ id: 'e', run_id: 'r', at: 't', event_type: 'gate_waiting', skill: 'approval-layer', payload: { surface, gate: 'approval:0d5e7a3c-1b2f-4c6d-8e9f-a0b1c2d3e4f5' } }], rows: [] })
+  assert.deepEqual(validate(schema, gate('approval')), [], 'an approval-layer gate is in the contract')
+  assert.ok(validate(schema, gate('made_up')).some((e) => /surface/.test(e)), 'an unknown surface is refused')
 })
 
 test('U37: spec/ledger-cost.v1.json validates GET /ledger/cost as the Worker answers it, and refuses a bucket short of a counter or a town with no name', () => {
