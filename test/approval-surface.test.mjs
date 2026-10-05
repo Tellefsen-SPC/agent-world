@@ -3,6 +3,7 @@
 // Synthetic data only: zztest- skills, ZZTEST names, made-up uuids, a made-up Worker host.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
 import path from 'node:path'
 
 const root = path.resolve(new URL('..', import.meta.url).pathname)
@@ -211,4 +212,12 @@ test('approval: never cross-checked — the layer closes its own gates with gate
   const closed = await threadFor({ gate: `approval:${PROPOSAL}` }, { extra: [ev('e3', 'gate_passed', { surface: 'approval', gate: `approval:${PROPOSAL}`, result: 'approved' }, { at: '2026-10-06T07:10:00Z' })] })
   assert.deepEqual(closed.gates, [])
   assert.equal(closed.unread, false)
+})
+
+test("approval: the panel's Open label is approve.mjs's, fed the server's flag — main.js defines none of its own (review 4)", () => {
+  // like test/pa.test.mjs's static checks: main.js needs a DOM, so its wiring is read, not run
+  const main = fs.readFileSync(path.join(root, 'overlay/main.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  assert.match(main, /import\s*\{[^}]*\bopenLabel\b[^}]*\}\s*from\s*'\.\/approve\.mjs'/, 'main.js imports openLabel from ./approve.mjs')
+  assert.ok(!/(?:\b(?:const|let|var|function)\s+openLabel\b|\bopenLabel\s*=)/.test(main), 'main.js defines no openLabel of its own')
+  assert.match(main, /openLabel\(url, thread\.ref\?\.console\)/, "the run panel's Open button passes the server's console flag")
 })
