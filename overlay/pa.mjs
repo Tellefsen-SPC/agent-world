@@ -171,7 +171,7 @@ export function viewOf(result) {
   if (status === 0) return v('off', 'The side port did not answer', 'The question did not leave this machine. Is ./dev.sh running?')
   if (status === 429) {
     const wait = Number.isFinite(b.retry_after) ? `Try again in ${formatWait(b.retry_after)}: the budget resets at 00:00 UTC (04:00 Muscat).` : 'The budget resets at 00:00 UTC (04:00 Muscat).'
-    return v('budget', "The PA's budget for today is spent", 'Nothing was asked and nothing was spent.', { detail, wait })
+    return v('budget', "The PA's budget for today is spent", 'No model was called for this question, and nothing was recorded.', { detail, wait })
   }
   if (b.error === 'world_not_configured') return v('off', 'PA not switched on on this machine', detail || "The Worker's address or token is missing from .env.")
   if (status === 503 || b.error === 'ask_not_configured') return v('off', 'PA not switched on', 'The Worker has the route, but no model to call yet.', { detail })
