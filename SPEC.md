@@ -8,7 +8,7 @@ Written 2026-09-06 by build-kickoff v1.3 from the Notion Project *Agent World â€
 
 **Hard constraints.**
 - The world is a mirror. It holds no state except map layout; every rendered fact is read from Compass (Supabase), Notion or Airtable. It writes nothing to the substrate, ever.
-- Zero tokens. No model call exists anywhere in the fork. Nothing in the world thinks.
+- Zero tokens. No model call exists anywhere in the fork. Nothing in the world thinks. *(2026-10-05, to ratify: still true of the fork; the PA (ES-4.6) spends tokens on the Worker, which makes its one model call â€” the world forwards the question and never calls a model itself)*
 - `src/` stays byte-identical to upstream. One adapter file (plus its helper folder) under `server/harnesses/` is the whole seam.
 - Only states that want something from a human get a badge; silence is the feature.
 - Annex III: `actor` draws an avatar, nothing else. No per-person rendering or aggregation.

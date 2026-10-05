@@ -1,6 +1,7 @@
 // Agent World — invariants that hold for every unit, every session. `npm test` runs this file.
 // 1. src/ is byte-identical to upstream (the fork's seam is one adapter file).
-// 2. The world burns zero tokens: no model endpoint or SDK anywhere outside node_modules.
+// 2. The fork calls no model: no model endpoint or SDK anywhere outside node_modules. (The PA spends tokens on the
+//    Worker, which makes the one model call; the fork only forwards the question — ADR-0008.)
 // 3. The adapter never writes to the substrate (static guard; the human checks prove it live). Two non-GETs are
 //    allowed, each pinned to one line in one file: Notion's data-source query (a read with a body) and the PA's
 //    question to the Worker's POST /ask (U16; the Worker, not the world, records the ask as its own run).
@@ -43,7 +44,7 @@ const walk = (dir, out = []) => {
   return out
 }
 
-test('no model API anywhere in the fork (zero tokens)', () => {
+test('no model API anywhere in the fork (the fork calls no model; the PA\'s tokens are spent on the Worker)', () => {
   const needles = [/api\.anthropic\.com/, /api\.openai\.com/, /generativelanguage\.googleapis/, /@anthropic-ai\/sdk/, /["']openai["']/, /messages\.create\(/]
   const hits = []
   for (const f of walk(root)) {
@@ -150,4 +151,11 @@ test('the Notion client queries only allowed data sources: a listed id goes out 
   assert.equal(sources.isAllowed('22222222333344445555666666666666', {}), false, 'and refused while it is not')
   assert.match(sources.unreadableNote('TASKS', new Error('notion 404: object_not_found')), /^SKIPPED:ENV — NOTION_DS_TASKS is set but unreadable: notion 404/)
   assert.equal(sources.isAllowed('33dc0af9c97480e99d5d000ba4bd72ea', {}), true, 'dashed and undashed forms are the same id')
+})
+
+test('the rules say what is true of tokens: the fork calls no model, and the PA spends Worker tokens (review 12)', () => {
+  const claude = fs.readFileSync(path.join(root, 'CLAUDE.md'), 'utf8')
+  assert.ok(!/The world burns zero tokens;/.test(claude), 'CLAUDE.md no longer claims the world burns zero tokens')
+  assert.match(claude, /The fork calls no model/)
+  assert.match(claude, /The PA spends tokens, but on the Worker/)
 })
