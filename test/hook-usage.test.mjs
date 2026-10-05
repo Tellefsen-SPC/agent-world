@@ -217,7 +217,9 @@ test('SessionEnd (review item 3): the open gate\'s close and run_completed go in
     assert.deepEqual(events.map((e) => e.event_type), ['gate_passed', 'run_completed'])
     assert.equal(events[0].payload.result, 'rejected')
     assert.deepEqual(events[1].payload.usage, EXPECTED)
-    assert.ok(ms < 3500, `${ms} ms (the 2 s post and the sum; the jq hook took 8.1 s here)`)
+    // 2.1 s on an idle machine (the jq hook took 8.1 s here); the bound is the hook's own limit, which the wall-clock
+    // budget keeps even on a loaded one — that the post's limit is 2 s is pinned with a stand-in curl below
+    assert.ok(ms < settingsTimeoutMs(), `${ms} ms`)
   } finally {
     await worker.close()
   }
@@ -242,16 +244,25 @@ test('SessionEnd (review item 3): a stalled transcript and a silent Worker still
   }
 })
 
-test('SessionEnd: the budget adds up at the cap — an 8 s sum leaves the post 1 s, and the two fit the hook\'s 10 s with room for bash and node to start', () => {
-  const postMax = (elapsed) => Number(execFileSync('bash', ['-c', `eval "$(sed -n '/^post_max()/,/^}/p' "${hook}")"; post_max '{"usage":null,"skipped":"timeout","elapsed_ms":${elapsed}}'`], { encoding: 'utf8' }).trim())
-  assert.equal(postMax(100), 2)
-  assert.equal(postMax(6100), 2)
-  assert.equal(postMax(8050), 0.95)
-  assert.equal(postMax(9900), 0.5, 'never under half a second')
-  assert.ok(u.MAX_USAGE_DEADLINE_MS + 100 + postMax(u.MAX_USAGE_DEADLINE_MS + 100) + 500 <= settingsTimeoutMs(), 'at the cap: sum + post + starts fit')
+test('SessionEnd: the budget is wall-clock from the hook\'s start — the sum stops 1 s before 9 s, the POST gets what is left, 2 s at most and 0.5 s at least', () => {
+  const fn = (name, arg) => execFileSync('bash', ['-c', `eval "$(sed -n '/^${name}()/,/^}/p' "${hook}")"; ${name} ${arg}`], { encoding: 'utf8', env: { ...process.env, LEDGER_POST_BUDGET_MS: '' } }).trim()
+  assert.deepEqual(['3000', '2000', '1999', '1234', '600', '500', '0', '-50'].map((r) => fn('post_max', r)), ['2', '2', '1.999', '1.234', '0.600', '0.5', '0.5', '0.5'])
+  assert.equal(fn('post_budget_ms', ''), '9000')
+  for (const [v, want] of [['2500', '2500'], ['20000', '9000'], ['x', '9000']]) {
+    assert.equal(execFileSync('bash', ['-c', `eval "$(sed -n '/^post_budget_ms()/,/^}/p' "${hook}")"; post_budget_ms`], { encoding: 'utf8', env: { ...process.env, LEDGER_POST_BUDGET_MS: v } }).trim(), want, `LEDGER_POST_BUDGET_MS=${v} may only lower it`)
+  }
+  // the sum's deadline: its own (6 s, at most 8 s) cut to what is left before --until
+  const t = 1_000_000
+  assert.equal(u.effectiveDeadlineMs({}, NaN, t), 6000)
+  assert.equal(u.effectiveDeadlineMs({}, t + 2000, t), 2000, 'a late start shortens the sum')
+  assert.equal(u.effectiveDeadlineMs({ HOOK_USAGE_DEADLINE_MS: '8000' }, t + 8000, t), 8000)
+  assert.equal(u.effectiveDeadlineMs({}, t - 5, t), 0, 'nothing left: no sum at all')
+  // at the worst: the budget's 9 s, the post's floor, and bash and perl starting, inside the hook's 10 s
+  assert.ok(9000 + 500 <= settingsTimeoutMs() - 300)
   const text = fs.readFileSync(hook, 'utf8')
   assert.match(text, /LEDGER_SKIP_DOTENV/, 'tests that really post can never read .env')
   assert.ok(!/jq[^\n]*input_tokens/.test(text), 'no second implementation of the count in jq')
+  assert.ok(text.indexOf('HOOK_T0="$(now_ms)"') < text.indexOf('INPUT="$(cat)"'), 'the clock starts before the input is read')
 })
 
 test('SessionEnd: the POST gets what is left — after a long sum, curl\'s limit is the budget less the sum, never the full 2 s', { timeout: 30_000 }, () => {
@@ -273,6 +284,15 @@ test('SessionEnd: the POST gets what is left — after a long sum, curl\'s limit
     const args = fs.readFileSync(argsFile, 'utf8').split('\n')
     const limit = Number(args[args.indexOf('-m') + 1])
     assert.ok(limit >= 0.5 && limit < 1.2, `curl -m ${limit}: the budget less the sum`)
+    // the cap (8 s) against a 2.5 s budget: the sum stops at the budget less 1 s, not at 8 s
+    fs.rmSync(argsFile)
+    execFileSync('bash', [hook, 'run_started'], { env: { ...base, HOOK_DRY_RUN: '1' }, input: JSON.stringify({ session_id: `${sid}-2`, hook_event_name: 'UserPromptSubmit', cwd: '/tmp/zz' }), timeout: 10_000 })
+    const t0 = Date.now()
+    execFileSync('bash', [hook, 'run_completed'], { env: { ...base, HOOK_USAGE_DEADLINE_MS: '8000', LEDGER_POST_BUDGET_MS: '2500' }, input: JSON.stringify({ session_id: `${sid}-2`, hook_event_name: 'SessionEnd', transcript_path: fifo }), timeout: 15_000 })
+    const took = Date.now() - t0
+    assert.ok(took < 6000, `${took} ms: the budget, not the 8 s deadline, ended the sum`)
+    const args2 = fs.readFileSync(argsFile, 'utf8').split('\n')
+    assert.ok(Number(args2[args2.indexOf('-m') + 1]) >= 0.5, 'and the post still got its floor')
     assert.ok(!args.join(' ').includes('zztest-stub-token') || args.some((a) => a === 'Authorization: Bearer zztest-stub-token'), 'the token only in its header')
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })

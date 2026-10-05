@@ -6,8 +6,10 @@
  * summariseUsage). Decided 2026-10-05 (review of aw-pa-panel, item 3): this replaces the jq sum in ledger.sh, which
  * could not stop part-way through a long line and re-implemented the rule in another language.
  *
- *   node .claude/hooks/usage.mjs <transcript.jsonl>
+ *   node .claude/hooks/usage.mjs <transcript.jsonl> [--until <ms since the epoch>]
  *     prints one line: {"usage": {…} | null, "skipped": "timeout" | null, "elapsed_ms": n}
+ *     --until (ledger.sh's, not the template's): stop by then even when the deadline is later — SessionEnd's budget is
+ *     wall-clock from the hook's start, so a slow start on a loaded machine shortens the sum, never the post.
  *
  * The rule, as the template's:
  *   - the files: the session transcript, then <transcript minus .jsonl>/subagents/*.jsonl — that folder only, regular
@@ -269,8 +271,16 @@ export async function transcriptUsage(transcriptPath) {
 // threads (a FIFO's open blocks), and Node's exit waits for it — measured: process.exit hung past 4 s, while a hard kill
 // ended in a third of a second. ledger.sh waits for this process, so after a timeout it ends itself at once; it wrote
 // nothing but its one line, and holds nothing that needs closing.
+/** The deadline for this run: the configured one, cut to what is left before `until` (ms since the epoch) when given. */
+export function effectiveDeadlineMs(env = process.env, until = NaN, now = Date.now()) {
+  const own = usageDeadlineMs(env)
+  return Number.isFinite(until) ? Math.max(0, Math.min(own, until - now)) : own
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const { usage, skipped } = await sessionUsage(process.argv[2], { deadlineMs: usageDeadlineMs() })
+  const at = process.argv.indexOf('--until')
+  const until = at > 2 ? Number(process.argv[at + 1]) : NaN
+  const { usage, skipped } = await sessionUsage(process.argv[2], { deadlineMs: effectiveDeadlineMs(process.env, until) })
   writeSync(1, `${JSON.stringify({ usage, skipped, elapsed_ms: Math.round(performance.now()) })}\n`)
   if (skipped === 'timeout') process.kill(process.pid, 'SIGKILL')
   process.exit(0)

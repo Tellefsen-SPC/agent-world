@@ -36,8 +36,15 @@
 # resumed session's first prompt) is a duplicate the Worker ignores (on_conflict=id, ignore-duplicates).
 set -u
 EVENT="${1:-}"
+# now_ms → milliseconds since the epoch: bash 5's EPOCHREALTIME, else perl (macOS and CI images have it), else whole
+# seconds. SessionEnd's budget is wall-clock from the hook's own start, so it holds on a loaded machine too.
+now_ms() {
+  if [ -n "${EPOCHREALTIME:-}" ]; then local t="${EPOCHREALTIME/[.,]/}"; echo $(( t / 1000 )); return; fi
+  perl -MTime::HiRes=time -e 'printf "%d\n", time*1000' 2>/dev/null || echo $(( $(date +%s) * 1000 ))
+}
+case "$EVENT" in run_completed) HOOK_T0="$(now_ms)" ;; esac   # before anything else: the budget counts from here
 HERE="$(cd "$(dirname "$0")/../.." && pwd)"
-# usage_result <transcript path> → one line {"usage": {…}|null, "skipped": "timeout"|null, "elapsed_ms": n} from
+# usage_result <transcript path> [until, ms since the epoch] → one line {"usage": {…}|null, "skipped": "timeout"|null, "elapsed_ms": n} from
 # .claude/hooks/usage.mjs (the template's count, ported: the session transcript and <session>/subagents/*.jsonl, one
 # de-duplication across all of them, the cache split, by_model, subagents — see that file), or nothing: no path, no
 # node, or no answer. usage.mjs keeps its own deadline and ends itself after a timeout; this waits at most 9 s more
@@ -47,7 +54,7 @@ usage_result() {
   command -v node >/dev/null 2>&1 || return 0
   local tmp pid timer
   tmp="$(mktemp "${TMPDIR:-/tmp}/aw-usage.XXXXXX")" || return 0
-  node "$HERE/.claude/hooks/usage.mjs" "$1" </dev/null >"$tmp" 2>/dev/null &
+  node "$HERE/.claude/hooks/usage.mjs" "$1" ${2:+--until "$2"} </dev/null >"$tmp" 2>/dev/null &
   pid=$!
   ( sleep 9; kill -KILL "$pid" 2>/dev/null ) </dev/null >/dev/null 2>&1 &
   timer=$!
@@ -138,7 +145,7 @@ started() {  # $1 = session id
 # close_run: the open gates' closes (rejected) and run_completed in ONE POST {"events":[…]} (review item 3, 2026-10-05):
 # one round trip, so a Worker that never answers costs the hook one --max-time, not one per gate. The Worker takes at
 # most 50 events a request, so at most 49 closes ride with the end (a session never has that many prompts open at once).
-close_run() {  # $1 = run_id, $2 = gates file, $3 = note for the rejected closes, $4 = run_completed payload, $5 = curl --max-time
+close_run() {  # $1 = run_id, $2 = gates file, $3 = note for the rejected closes, $4 = run_completed payload, $5 = the budget's end (ms)
   local key gate extra events n=0
   extra="$(jq -cn --arg n "$3" '{result:"rejected",note:$n}')"
   events=""
@@ -150,7 +157,8 @@ close_run() {  # $1 = run_id, $2 = gates file, $3 = note for the rejected closes
     events="$events$(base "$1" gate_passed "$(gate_payload "$gate" "$extra")" "$(eid "$1" "$gate" gate_passed)")"$'\n'
   done < <(open_gates "$2")
   events="$events$(base "$1" run_completed "$4" "$(eid "$1" "" run_completed)")"
-  post "$(printf '%s\n' "$events" | jq -cs '{events: .}')" "${5:-2}"
+  events="$(printf '%s\n' "$events" | jq -cs '{events: .}')"
+  post "$events" "$(post_max $(( ${5:-0} - $(now_ms) )))"
   rm -f "$2"
 }
 # with_usage <payload json> <usage_result line> → the payload plus {usage} when the transcripts sum to something (U35),
@@ -158,14 +166,17 @@ close_run() {  # $1 = run_id, $2 = gates file, $3 = note for the rejected closes
 with_usage() {
   jq -cn --argjson p "$1" --argjson r "${2:-null}" '$p + (if ($r | type) != "object" then {} elif $r.usage then {usage: $r.usage} elif $r.skipped then {usage_skipped: $r.skipped} else {} end)'
 }
-# post_max <usage_result line> → curl's --max-time for the one POST: 2 s, less when the sum ran long, never under 0.5 s,
-# so the sum (at most 8 s) and the post fit SessionEnd's 10 s with room for bash, jq and node to start. 9 s is the line
-# (LEDGER_POST_BUDGET_MS, tests only, may only lower it).
+# SessionEnd's budget: 9 s of the hook's 10 s, wall-clock from the hook's start (LEDGER_POST_BUDGET_MS, tests only, may
+# only lower it). The sum may run until 1 s before its end (usage.mjs --until; never past its own 6 s / 8 s deadline),
+# and the POST gets what is left when it goes: 2 s at most, never under 0.5 s.
+post_budget_ms() {
+  case "${LEDGER_POST_BUDGET_MS:-}" in ''|*[!0-9]*) echo 9000 ;; *) [ "$LEDGER_POST_BUDGET_MS" -lt 9000 ] && echo "$LEDGER_POST_BUDGET_MS" || echo 9000 ;; esac
+}
+# post_max <ms left> → curl's --max-time in seconds: 2 at most, 0.5 at least.
 post_max() {
-  local b=9000
-  case "${LEDGER_POST_BUDGET_MS:-}" in ''|*[!0-9]*) ;; *) [ "$LEDGER_POST_BUDGET_MS" -lt 9000 ] && b="$LEDGER_POST_BUDGET_MS" ;; esac
-  jq -rn --argjson r "${1:-null}" --argjson b "$b" '(if ($r | type) == "object" then ($r.elapsed_ms // 0) else 0 end) as $e
-    | [2, (($b - $e) / 1000)] | min | if . < 0.5 then 0.5 else . end'
+  local r="${1:-0}"
+  case "$r" in -*|''|*[!0-9-]*) r=0 ;; esac
+  if [ "$r" -ge 2000 ]; then echo 2; elif [ "$r" -le 500 ]; then echo 0.5; else printf '%d.%03d\n' $(( r / 1000 )) $(( r % 1000 )); fi
 }
 # transcript_for <session id> → the path Claude Code writes the session's transcript to: <projects>/<slug of cwd>/<id>.jsonl,
 # the slug being the cwd with every character outside [A-Za-z0-9] as "-" (the state file carries the cwd; else this repo).
@@ -177,11 +188,13 @@ transcript_for() {
   printf '%s/%s/%s.jsonl' "$PROJECTS_DIR" "$slug" "$1"
 }
 end_session() {  # $1 = session id, $2 = note for rejected closes, $3 = run_completed payload, $4 = transcript path. Posts only if run_started was.
-  local r
+  local r end
   case "$(started "$1")" in
     yes|legacy)
-      r="$(usage_result "${4:-}")"
-      close_run "$1" "$STATE_DIR/$1.gates" "$2" "$(with_usage "$3" "$r")" "$(post_max "$r")" ;;
+      # the budget runs from the hook's start at SessionEnd; a reconcile at SessionStart gives each closed session its own
+      end=$(( ${HOOK_T0:-$(now_ms)} + $(post_budget_ms) ))
+      r="$(usage_result "${4:-}" $(( end - 1000 )))"
+      close_run "$1" "$STATE_DIR/$1.gates" "$2" "$(with_usage "$3" "$r")" "$end" ;;
     *) rm -f "$STATE_DIR/$1.gates" ;;
   esac
   rm -f "$STATE_DIR/$1.session"
