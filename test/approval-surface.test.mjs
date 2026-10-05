@@ -12,15 +12,16 @@ const { ALL_SURFACES, PRESETS, makeViewer } = await import(path.join(root, 'serv
 const PROPOSAL = '0d5e7a3c-1b2f-4c6d-8e9f-a0b1c2d3e4f5'
 const gateOf = (name = `approval:${PROPOSAL}`, extra = {}) => ({ gate: name, surface: 'approval', ref_url: '', at: 1, ...extra })
 
-test('approval: the surface is in ALL_SURFACES and on the operator preset, beside pending_approval and class_b_gate — never on client or prime', () => {
+test('approval: the surface is in ALL_SURFACES and Owner-only — operator, client, prime and viewer never tap it (decided 2026-10-06, to ratify)', () => {
   assert.ok(ALL_SURFACES.includes('approval'), 'ALL_SURFACES names the approval surface')
   assert.deepEqual(PRESETS.owner.surfaces, ALL_SURFACES, 'the Owner sees every surface, as before')
-  assert.ok(PRESETS.operator.surfaces.includes('approval'), 'the operator taps approvals')
-  for (const s of ['pending_approval', 'class_b_gate']) assert.ok(PRESETS.operator.surfaces.includes(s), `operator keeps ${s}`)
-  for (const preset of ['client', 'prime', 'viewer']) assert.ok(!PRESETS[preset].surfaces.includes('approval'), `${preset} never sees an approval`)
+  // D2: a ? only for someone who can resolve it. The layer's approver role defaults to Owner and gate_waiting does not
+  // say which role a proposal needs, so an operator would hold ?s the console refuses them — until the event says so
+  assert.deepEqual(PRESETS.operator.surfaces, ['pending_approval', 'class_b_gate'], 'the operator taps exactly what it did before')
+  for (const preset of ['operator', 'client', 'prime', 'viewer']) assert.ok(!PRESETS[preset].surfaces.includes('approval'), `${preset} never taps an approval`)
   // gated the way every other surface is: canTap = the tap capability and the surface on the preset's list
-  for (const preset of ['owner', 'operator']) assert.equal(makeViewer({ preset }).canTap(gateOf()), true, `${preset} taps an approval`)
-  for (const preset of ['client', 'prime', 'viewer']) assert.equal(makeViewer({ preset }).canTap(gateOf()), false, `${preset} does not`)
+  assert.equal(makeViewer({ preset: 'owner' }).canTap(gateOf()), true, 'the Owner taps an approval')
+  for (const preset of ['operator', 'client', 'prime', 'viewer']) assert.equal(makeViewer({ preset }).canTap(gateOf()), false, `${preset} does not`)
 })
 
 const { whatToDo, whatToDoLong } = await import(path.join(root, 'server/harnesses/compass/threads.mjs'))
