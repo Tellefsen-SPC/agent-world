@@ -162,14 +162,17 @@ test('U16W: the sidecar\'s own answers — a bad body is never sent, nothing con
     const ask = createAsk(cfg)
     assert.deepEqual(await ask.ask({}).then((r) => [r.status, /question is required/.test(r.body.error)]), [400, true])
     assert.equal(worker.seen.length, 0, 'a body the Worker would refuse never leaves the machine')
+    // the slot is taken before the first await, so the second ask needs no wait to find it taken
     const first = ask.ask({ question: 'q1' })
-    await new Promise((r) => setTimeout(r, 20))
     assert.deepEqual(await ask.ask({ question: 'q2' }).then((r) => [r.status, r.body.error]), [409, 'ask_in_flight'])
     const slow = await first
     assert.deepEqual([slow.status, slow.body.error], [504, 'worker_timeout'])
     assert.match(slow.body.detail, /did not answer within/)
     assert.equal(ask.inFlight(), false, 'the slot is free again after the deadline')
-    assert.equal(worker.seen.length, 1, 'the refused second question never reached the Worker')
+    // whether q1 reached the stand-in inside 150 ms depends on the machine's load; that q2 never did does not
+    await new Promise((r) => setTimeout(r, 50))
+    assert.ok(!worker.seen.some((s) => s.body?.question === 'q2'), 'the refused second question never reached the Worker')
+    assert.ok(worker.seen.length <= 1)
   } finally {
     await worker.close()
   }

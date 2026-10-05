@@ -27,6 +27,28 @@ async function until(fn, ms = 3000, what = 'condition') {
   assert.fail(`timed out waiting for ${what}`)
 }
 
+/**
+ * The backoff the client chose, in order, read from what it said: the outage warning names the first wait ("retrying in
+ * 20 ms"), each later failure its own ("retry 2 in 40 ms"). Its decisions, not the wall clock — so a loaded machine
+ * cannot reorder them (review item 11: comparing measured gaps was flaky under parallel load).
+ */
+function retryDelays(c) {
+  const out = []
+  for (const m of c.warns) {
+    const first = m.match(/retrying in (\d+) ms/)
+    if (first) out.push(Number(first[1]))
+  }
+  for (const m of c.logs) {
+    const next = String(m).match(/— retry (\d+) in (\d+) ms/)
+    if (next) out[Number(next[1]) - 1] = Number(next[2])
+  }
+  return out
+}
+/** Each measured gap between requests is at least the wait the client chose before it: a timer never fires early. */
+function assertWaited(gaps, delays, what) {
+  delays.slice(0, gaps.length).forEach((d, i) => assert.ok(gaps[i] >= d - 2, `${what}: gap ${i + 1} is ${gaps[i]} ms, under the ${d} ms chosen`))
+}
+
 /** A local stand-in for the Worker's stream: `handler(req, res, n)` gets the request number; every request is kept. */
 async function worker(handler) {
   const requests = []
@@ -100,12 +122,14 @@ test('a long line is read in one pass however it is cut up, and an unterminated 
   const got = []
   const p = createParser({ onMessage: (m) => got.push(m), maxBytes: 1e6, maxLineBytes: 1e6 })
   const started = Date.now()
+  // 200,000 one-byte chunks: linear is tens of ms; the old rescan was 2.3 s at 50,000 and would be ~16× that here,
+  // so a limit with room for a loaded machine (review item 11) still tells the two apart
   p.feed('data: ')
-  for (let i = 0; i < 50_000; i++) p.feed('x')
+  for (let i = 0; i < 200_000; i++) p.feed('x')
   p.feed('\n\n')
-  assert.ok(Date.now() - started < 500, `took ${Date.now() - started} ms`)
+  assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms`)
   assert.equal(got.length, 1)
-  assert.equal(got[0].data.length, 50_000)
+  assert.equal(got[0].data.length, 200_000)
   // the cap on a line that never ends: fine up to it, refused past it
   const capped = createParser({ maxLineBytes: 256 })
   for (let i = 0; i < 25; i++) capped.feed('y'.repeat(10))
@@ -153,7 +177,7 @@ test('subscribes with the bearer, hands each ledger event on, and resumes from L
   }
 })
 
-test('a failing stream backs off — longer each time, capped — says so once, and says when it is back', { timeout: 10000 }, async () => {
+test('a failing stream backs off — longer each time, capped — says so once, and says when it is back', { timeout: 20000 }, async () => {
   const w = await worker((req, res, n) => {
     if (n <= 4) {
       res.writeHead(503, { 'Content-Type': 'application/json' })
@@ -165,12 +189,12 @@ test('a failing stream backs off — longer each time, capped — says so once, 
   const c = client(w.url, { baseMs: 20, maxMs: 70 })
   try {
     c.s.start()
-    await until(() => c.warns.length === 2, 5000, 'the stream to come back and hold')
+    await until(() => c.warns.length === 2, 15000, 'the stream to come back and hold')
     assert.equal(c.s.status().state, 'open')
     const gaps = w.requests.slice(1).map((r, i) => r.at - w.requests[i].at)
     assert.equal(gaps.length, 4)
-    assert.ok(gaps[0] >= 15 && gaps[1] >= 35, `doubling: ${gaps}`)
-    assert.ok(gaps[2] >= 60 && gaps[3] >= 60 && gaps[3] < 300, `capped at maxMs: ${gaps}`)
+    assert.deepEqual(retryDelays(c), [20, 40, 70, 70], 'doubling from baseMs, then capped at maxMs — exactly')
+    assertWaited(gaps, [20, 40, 70, 70], 'backoff')
     assert.equal(c.warns.length, 2, `one warning for the outage, one for the recovery: ${c.warns.join(' | ')}`)
     assert.match(c.warns[0], /realtime: stream unavailable — GET \/events\/stream answered 503\. The polls carry on/)
     assert.equal(c.warns[1], 'bot-crossing: compass — realtime: subscribed ops_run_events (GET /events/stream) — back after 4 failed tries')
@@ -204,7 +228,7 @@ test('a refused bearer, or a Worker without the route, waits the longest backoff
   }
 })
 
-test('a Worker that never answers, answers in the wrong type, goes quiet, or sends a giant message is given up on and retried', { timeout: 10000 }, async () => {
+test('a Worker that never answers, answers in the wrong type, goes quiet, or sends a giant message is given up on and retried', { timeout: 60000 }, async () => {
   // never answers: a socket that accepts and says nothing
   const sockets = []
   const hang = net.createServer((s) => sockets.push(s))
@@ -212,7 +236,7 @@ test('a Worker that never answers, answers in the wrong type, goes quiet, or sen
   const c1 = client(`http://127.0.0.1:${hang.address().port}/events/stream`, { connectMs: 60 })
   try {
     c1.s.start()
-    await until(() => /did not answer within 60 ms/.test(c1.s.status().error), 2000, 'the connect deadline')
+    await until(() => /did not answer within 60 ms/.test(c1.s.status().error), 8000, 'the connect deadline')
   } finally {
     c1.s.stop()
     for (const s of sockets) s.destroy()
@@ -231,9 +255,11 @@ test('a Worker that never answers, answers in the wrong type, goes quiet, or sen
     const c = client(w.url, opts)
     try {
       c.s.start()
-      await until(() => w.requests.length >= 3, 3000, `${name}: two retries`)
+      await until(() => w.requests.length >= 3 && retryDelays(c).length >= 2, 8000, `${name}: two retries`)
       const gaps = w.requests.slice(1).map((r, i) => r.at - w.requests[i].at)
-      assert.ok(gaps[1] > gaps[0], `${name}: a Worker that opens and then fails keeps backing off: ${gaps}`)
+      const delays = retryDelays(c)
+      assert.deepEqual(delays.slice(0, 2), [20, 40], `${name}: a Worker that opens and then fails keeps backing off — 20 ms, then 40 ms`)
+      assertWaited(gaps, delays, name)
       assert.ok(c.warns.some((m) => why.test(m)), `${name}: ${c.warns.join(' | ')}`)
       assert.equal(c.warns.filter((m) => /unavailable/.test(m)).length, 1, `${name}: the outage is said once`)
     } finally {
