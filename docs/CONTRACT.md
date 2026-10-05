@@ -31,11 +31,11 @@ rule above).
     `approvalConsoleUrl`).
   - Any other name gives no link: `approval:`, `APPROVAL:`, a path, markup, a space, `?`, `#`, a percent escape. The
     `?` stays, with nothing to open.
-- **Only that console, whatever the event says.** An approval gate opens the console under the Worker `EVENTS_URL`
-  names, and nothing else. It takes a `ref_url` only when that is itself the console's link, the prefix, `/` and a
-  uuid, rebuilt by `approvalConsoleUrl`; else it uses the link its name gives. Any other `ref_url` is dropped, whatever
-  host it names: the layer writes none, so one was written by someone else. An approval gate's `ref_url` is never
-  the Context link and is never passed on in `gates[]`. Every other surface keeps its rule, a `ref_url` that is a link.
+- **Only its own proposal, whatever the event says.** An approval gate opens its own proposal in the console under
+  the Worker `EVENTS_URL` names, built from its gate name and the configured prefix, and nothing else. Its `ref_url` is
+  never read: the layer writes none, so one was written by someone else. A forged one could name another host, and one
+  shaped like the console's own link could point Approve at a different proposal (confirmation, 2026-10-06). It is never
+  the Context link and never passed on in `gates[]`. Every other surface keeps its rule, a `ref_url` that is a link.
   The thread's `gates[]` entry for an approval gate carries its link as `url`, so the in-tray's Approve opens that
   gate's own proposal or nothing. `ref.console: true` is set on the server when Open is that console link, and the
   panel says **Open in Compass** on that flag alone, never because a link looks like the console's.
@@ -44,6 +44,10 @@ rule above).
   `consoleProposalsUrl` field, or of `approvalConsoleUrl(…)` or `gateUrl(…)` written in the call, and a rebuild of
   the field. A text check cannot follow a link through a variable; the harness test asserts at run time that nothing
   fetches the console.
+- **One gate per thread.** On a run with several open gates, the request's title, the panel, the card's tag, the
+  preview, Open, the Context link and the in-tray row all name one gate: the oldest the viewer can tap, else the oldest
+  (`compass/threads.mjs` `askedGate`, `overlay/intray.mjs` `askedGateOf`; confirmation, 2026-10-06, to ratify — SPEC
+  ES-1.5 said the newest). So an approval gate and another surface's gate on one run never share a card.
 - **No cross-check.** The layer writes `gate_passed`, with the same gate name, when a proposal is decided. That is the
   first step of `decide`, before the proposal's status moves. The `?` leaves within a poll of it (`fold.mjs`), and
   `surfaces.mjs` never reads the console.
