@@ -138,8 +138,9 @@ test('U35: the hook sums a transcript — deduplicated on message.id (last entry
 test('U35: SessionEnd posts run_completed with usage (dry run), without usage when there is no transcript, and the reconcile at the next SessionStart reads the closed session\'s transcript from the projects dir', () => {
   const hook = path.join(root, '.claude/hooks/ledger.sh')
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-hook-'))
-  const env = { ...process.env, HOOK_DRY_RUN: '1', LEDGER_STATE_DIR: path.join(tmp, 'state'), LEDGER_RUN_ID_FILE: path.join(tmp, 'run_id'), LEDGER_PROJECTS_DIR: path.join(tmp, 'projects'), LEDGER_STALE_MINUTES: '30' }
-  const run = (event, input) => execFileSync('bash', [hook, event], { encoding: 'utf8', env, input: JSON.stringify(input) }).trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))
+  const env = { ...process.env, HOOK_DRY_RUN: '1', LEDGER_SKIP_DOTENV: '1', LEDGER_STATE_DIR: path.join(tmp, 'state'), LEDGER_RUN_ID_FILE: path.join(tmp, 'run_id'), LEDGER_PROJECTS_DIR: path.join(tmp, 'projects'), LEDGER_STALE_MINUTES: '30' }
+  // since 2026-10-05 SessionEnd posts its closes and run_completed as one {"events":[…]} body: read the events out of it
+  const run = (event, input) => execFileSync('bash', [hook, event], { encoding: 'utf8', env, input: JSON.stringify(input) }).trim().split('\n').filter(Boolean).flatMap((l) => { const o = JSON.parse(l); return Array.isArray(o.events) ? o.events : [o] })
   const transcript = path.join(root, 'test/fixtures/m2b-transcript.jsonl')
   // a session with a transcript
   const s1 = 'zztest-hook-s1'
