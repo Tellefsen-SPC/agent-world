@@ -32,6 +32,8 @@ const WHAT_TO_DO = {
   content_status: ['sign in Notion', 'A content draft is waiting for your signature. Open it in Notion, read it, and if it is right move Status from In Review to Scheduled. The ? clears within a poll.'],
   class_b_gate: ['answer in session', 'This run stopped to ask you something in the session that opened it. Open takes you to that session — answer there.'],
   client_gate: ["client's to tap", 'This acceptance is addressed to the client; it is theirs to tap, not yours.'],
+  // Compass's approval layer (src/lib/approval): a proposal parked in `waiting`, decided in the Compass console
+  approval: ['approve in Compass', 'A proposal is waiting for an approver. Open it in the Compass console and approve, edit or reject it.'],
 }
 /**
  * A class_b_gate is answered where the run lives, and that depends on what started it. Seen live

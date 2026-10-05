@@ -40,6 +40,7 @@ export function verbFor(surface, gateName = '') {
     case 'content_status': return 'Sign · Content'
     case 'class_b_gate': return 'Answer · session'
     case 'client_gate': return "Client's tap · client"
+    case 'approval': return 'Approve · Compass'
     case 'system_health': return 'Resolve · System Health'
     default: return `Resolve · ${gateName || surface || 'gate'}`
   }

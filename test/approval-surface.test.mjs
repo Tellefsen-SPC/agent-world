@@ -22,3 +22,15 @@ test('approval: the surface is in ALL_SURFACES and on the operator preset, besid
   for (const preset of ['owner', 'operator']) assert.equal(makeViewer({ preset }).canTap(gateOf()), true, `${preset} taps an approval`)
   for (const preset of ['client', 'prime', 'viewer']) assert.equal(makeViewer({ preset }).canTap(gateOf()), false, `${preset} does not`)
 })
+
+const { whatToDo, whatToDoLong } = await import(path.join(root, 'server/harnesses/compass/threads.mjs'))
+const { verbFor } = await import(path.join(root, 'server/harnesses/compass/still.mjs'))
+const LONG = 'A proposal is waiting for an approver. Open it in the Compass console and approve, edit or reject it.'
+
+test('approval: the labels — "approve in Compass" on the tag and the tray, the full line in the panel, "Approve · Compass" in the title', () => {
+  assert.equal(whatToDo(gateOf(), { trigger: 'cowork_scheduled' }), 'approve in Compass')
+  assert.equal(whatToDoLong(gateOf(), { trigger: 'cowork_scheduled' }), LONG)
+  assert.ok('approve in Compass'.length <= 20, "fits Bot Crossing's own card tag")
+  // the request's title is badge · verb · surface (ES-6.3) — never the raw gate name
+  assert.equal(verbFor('approval', `approval:${PROPOSAL}`), 'Approve · Compass')
+})
