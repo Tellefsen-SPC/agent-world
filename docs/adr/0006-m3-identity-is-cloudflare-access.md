@@ -1,6 +1,6 @@
 # ADR-0006 — Identity for the hosted M3 world is Cloudflare Access with the firm's Google accounts
 
-**Status:** Decided by the developer under delegated authority, 2026-10-04 — to ratify as a 🧠 Decision (D10 in `~/Projects/tellefsen/deliverables/decisions-2026-10-04.md`). Not firm policy until Christoffer logs it. Nothing is built on it yet: hosting is not in this
+**Status:** Decided by the developer under delegated authority, 2026-10-04 — to ratify (D10 in the developer's decisions record of 2026-10-04, to be logged by Christoffer as a 🧠 Decision). Not firm policy until Christoffer logs it. Nothing is built on it yet: hosting is not in this
 batch, and the only code is the `viewerFor(req)` seam, which works with any identity provider. (It answers
 `docs/multiplayer.md` open question 1.)
 

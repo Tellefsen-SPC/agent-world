@@ -1,6 +1,6 @@
 # ADR-0005 — Spend is the Owner's: clients never see cost, and the server enforces it
 
-**Status:** Decided by the developer under delegated authority, 2026-10-04 — to ratify as a 🧠 Decision (D10 in `~/Projects/tellefsen/deliverables/decisions-2026-10-04.md`). Not firm policy until Christoffer logs it; until then the code keeps the safe default below.
+**Status:** Decided by the developer under delegated authority, 2026-10-04 — to ratify (D10 in the developer's decisions record of 2026-10-04, to be logged by Christoffer as a 🧠 Decision). Not firm policy until Christoffer logs it; until then the code keeps the safe default below.
 The rule it builds on — spend is shown to the Owner preset only, never per person — is Christoffer's own call
 (ES-4.13 / Component 9, 2026-09-08).
 

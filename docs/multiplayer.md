@@ -113,13 +113,12 @@ Compass's problem, not the world's.
 ## Open questions for Christoffer
 
 1. **Identity provider.** Cloudflare Access with the firm's Google accounts, grants from configuration for now —
-   decided by the developer under delegated authority, 2026-10-04, to ratify as a 🧠 Decision (D10 in
-   `~/Projects/tellefsen/deliverables/decisions-2026-10-04.md`; `docs/adr/0006`). Not in force until ratified.
+   decided by the developer under delegated authority, 2026-10-04, to ratify (D10 in the developer's decisions record of 2026-10-04, to be logged by Christoffer as a 🧠 Decision;
+   `docs/adr/0006`). Not in force until ratified.
    Supabase Auth (what `viewer.mjs` anticipated) would have put the grants next to the ledger.
 2. **Where the grant table lives.** Compass (`ops_world_grants`, a migration through the U3 runner) or a
    config key. A table is easier to audit.
-3. **Does a client ever see cost?** See D10 in `~/Projects/tellefsen/deliverables/decisions-2026-10-04.md`: no —
-   cost stays Owner-only, a client never sees it — decided by the developer under delegated authority, 2026-10-04,
-   to ratify as a 🧠 Decision (`docs/adr/0005`). Until it is ratified, the code keeps that safe default: the side port
+3. **Does a client ever see cost?** No — cost stays Owner-only, a client never sees it — decided by the developer
+   under delegated authority, 2026-10-04, to ratify (D10 in the developer's decisions record of 2026-10-04, to be logged by Christoffer as a 🧠 Decision; `docs/adr/0005`). Until it is ratified, the code keeps that safe default: the side port
    answers spend to the Owner only. Note that the repo is public today and its spend fixture publishes per-client
    figures; making it private is an owner action (D10).
