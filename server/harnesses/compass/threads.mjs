@@ -115,15 +115,28 @@ export function approvalConsoleUrl(gateName, consoleProposalsUrl) {
   return url
 }
 
+const UUID_ONLY = new RegExp(`^${UUID}$`)
 /**
- * Where one gate's Open goes. Its ref_url when that is a link — the rule for every gate. Else, for an approval-layer
- * gate, which carries its proposal id in its name rather than a ref_url, the proposal's page in the Compass console.
- * Else nothing.
+ * A ref_url on an approval gate, taken only when it is itself a console link under this Worker's prefix — the prefix,
+ * one slash, a uuid and nothing else — and rebuilt by approvalConsoleUrl. The approval layer writes no ref_url on its
+ * events, so any other value was written by someone else: another host, a user@host, http, a query, a path.
+ */
+function consoleRef(refUrl, consoleProposalsUrl) {
+  if (typeof refUrl !== 'string' || typeof consoleProposalsUrl !== 'string' || !consoleProposalsUrl) return null
+  if (!refUrl.startsWith(`${consoleProposalsUrl}/`)) return null
+  const id = refUrl.slice(consoleProposalsUrl.length + 1)
+  return UUID_ONLY.test(id) ? approvalConsoleUrl(`approval:${id}`, consoleProposalsUrl) : null
+}
+
+/**
+ * Where one gate's Open goes. An approval-layer gate opens the Compass console under the Worker EVENTS_URL names and
+ * nothing else: its ref_url only when that is the console's own link for a proposal, else the link its name gives,
+ * else nothing (review 1, 2026-10-06: a forged ref_url to any host was opened and labelled "Open in Compass"). Every
+ * other gate: its ref_url when that is a link.
  */
 export function gateUrl(gate, { consoleProposalsUrl = '' } = {}) {
-  if (isLink(gate?.ref_url)) return gate.ref_url
-  if (gate?.surface === 'approval') return approvalConsoleUrl(gate.gate, consoleProposalsUrl) || ''
-  return ''
+  if (gate?.surface === 'approval') return consoleRef(gate.ref_url, consoleProposalsUrl) || approvalConsoleUrl(gate.gate, consoleProposalsUrl) || ''
+  return isLink(gate?.ref_url) ? gate.ref_url : ''
 }
 
 export function openUrlFor(run, row, gatesOpen, { claudeProjectUrl = '', consoleProposalsUrl = '' } = {}) {
@@ -210,12 +223,17 @@ export async function toThread(run, row, viewer, surfaces, now = Date.now(), opt
 
   const progress = run.project ? await surfaces.progress(run.project) : 0.05
   const gate = newest(pending)
-  const contextUrl = gate && isLink(gate.ref_url) ? gate.ref_url : ''
+  // An approval gate's ref_url is never the Context link: whatever it says, the layer did not write it (review 1).
+  const contextUrl = gate && gate.surface !== 'approval' && isLink(gate.ref_url) ? gate.ref_url : ''
   // A run can leave several gates (a content run leaves one per draft). Say so, or the human signs
   // one and wonders why the ? is still there — seen live 2026-09-06. Open goes to the next pending one.
   const gateLabel = gate ? (open.length > 1 ? `${gate.gate} (${pending.length} of ${open.length} left)` : gate.gate) : ''
   const art = newest(run.artifacts)
   const openUrl = openUrlFor(run, row, pending, opts)
+  // Set here, on the server, when Open is the Compass console's page for the gate's proposal: the panel's "Open in
+  // Compass" reads this flag, never the link's shape (review 1).
+  const gateLink = gate ? gateUrl(gate, opts) : ''
+  const consoleOpen = gate?.surface === 'approval' && Boolean(gateLink) && openUrl === gateLink
   // Placed by client, never by actor (Annex III): its town on its company's planet, else the campus (U12).
   const at = typeof opts.place === 'function' ? opts.place(run.client) : { zone: run.client || CAMPUS, planet: '', pack: '' }
 
@@ -263,11 +281,12 @@ export async function toThread(run, row, viewer, surfaces, now = Date.now(), opt
     // The skill's trust status under AUTO_RUN_POLICY (U17): the suit colour, one per run_mode. Never a person's.
     trust: typeof opts.trustOf === 'function' ? opts.trustOf(run.skill, run.runClass) : { mode: 'unknown', source: 'none' },
     // The gates still open on their surface (U14): the in-tray orders by the oldest one; each says who can tap it.
-    // An approval-layer gate also carries its own link (`url`: its ref_url, else its proposal in the Compass console,
-    // else ''), so the tray's Approve opens that proposal and nothing else; every other gate's link is its ref_url.
-    gates: pending.map((g) => ({ gate: g.gate, surface: g.surface, ref_url: isLink(g.ref_url) ? g.ref_url : '', at: g.at, canTap: viewer.canTap(g), what: whatToDo(g, run), ...(g.surface === 'approval' ? { url: gateUrl(g, opts) } : {}) })),
+    // An approval-layer gate also carries its own link (`url`: its proposal in the Compass console, or ''), so the tray's
+    // Approve opens that proposal and nothing else, and its ref_url is never passed on; every other gate's link is its
+    // ref_url.
+    gates: pending.map((g) => ({ gate: g.gate, surface: g.surface, ref_url: g.surface !== 'approval' && isLink(g.ref_url) ? g.ref_url : '', at: g.at, canTap: viewer.canTap(g), what: whatToDo(g, run), ...(g.surface === 'approval' ? { url: gateUrl(g, opts) } : {}) })),
     gateAt: pending.length ? Math.min(...pending.map((g) => g.at)) : 0,
-    ref: { run_id: run.id, url: openUrl, context: contextUrl && contextUrl !== openUrl ? contextUrl : '' },
+    ref: { run_id: run.id, url: openUrl, context: contextUrl && contextUrl !== openUrl ? contextUrl : '', ...(consoleOpen ? { console: true } : {}) },
   }
 }
 

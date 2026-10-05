@@ -57,12 +57,14 @@ test('an approval-layer gate is a "? Approve · Compass" request that opens the 
     assert.equal(waiting.gitBranch, 'approve in Compass')
     assert.equal(waiting.ref.url, `${WORKER}/console/proposals/${PROPOSAL}`, 'Open lands on the proposal in the console')
     assert.equal(waiting.gates[0].url, `${WORKER}/console/proposals/${PROPOSAL}`)
+    assert.equal(waiting.ref.console, true, "the server marks Open as the console, for the panel label")
     assert.deepEqual(harness.openThread(waiting.ref), { ok: true, url: `${WORKER}/console/proposals/${PROPOSAL}` })
 
     const malformed = byRun.get(run('02'))
     assert.ok(malformed?.unread, 'a malformed name still waits on a human')
     assert.equal(malformed.ref.url, null, 'and opens nothing')
     assert.equal(malformed.gates[0].url, '')
+    assert.equal(malformed.ref.console, undefined)
     assert.equal(harness.openThread(malformed.ref).ok, false)
 
     assert.ok(!byRun.has(run('03')), 'a decided proposal leaves with its gate_passed, read from the ledger')

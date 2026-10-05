@@ -110,18 +110,53 @@ test('approval: a malformed or injected gate name gives no link — never a brok
   assert.equal(threadsMod.approvalConsoleUrl(`approval:${PROPOSAL.toUpperCase()}`, `${WORKER}/console/proposals`), CONSOLE)
 })
 
-test('approval: a gate that carries a usable ref_url opens it, as every gate does; a ref_url that is not a link falls back to the console', async () => {
-  const elsewhere = 'https://zztest-surface.example/zztest-proposal'
-  const linked = await threadFor({ gate: `approval:${PROPOSAL}`, ref_url: elsewhere })
-  assert.equal(linked.ref.url, elsewhere, 'the ref_url wins, the rule for every gate')
-  assert.equal(linked.gates[0].url, elsewhere)
-  assert.equal(linked.gates[0].ref_url, elsewhere)
-  const reference = await threadFor({ gate: `approval:${PROPOSAL}`, ref_url: 'ops_config:ZZTEST_KEY' })
-  assert.equal(reference.ref.url, CONSOLE, 'a Compass reference is never an Open target; the console is')
-  assert.equal(reference.gates[0].url, CONSOLE)
+test('approval: an approval gate opens only the console under EVENTS_URL — a ref_url only when it is that console link; a forged one never opens, labels or rides along (review 1)', async () => {
+  // the approval layer never writes a ref_url on these events: anything here was written by someone else
+  const forged = [
+    `https://evil.example/console/proposals/${PROPOSAL}`,
+    `https://zztest-worker.example@evil.example/console/proposals/${PROPOSAL}`,
+    `https://zztest-worker.example.evil.example/console/proposals/${PROPOSAL}`,
+    `http://zztest-worker.example/console/proposals/${PROPOSAL}`,
+    `${WORKER}/console/proposals/${PROPOSAL}?next=https://evil.example`,
+    `${WORKER}/console/proposals/${PROPOSAL}#https://evil.example`,
+    `${WORKER}/console/proposals/../../evil.example`,
+    `${WORKER}/console/proposals/${PROPOSAL}/../../../evil.example`,
+    `${WORKER}/console/proposalsevil.example/${PROPOSAL}`,
+    'https://zztest-surface.example/evil.example-proposal',
+    'ops_config:ZZTEST_KEY_evil.example',
+  ]
+  for (const ref_url of forged) {
+    const t = await threadFor({ gate: `approval:${PROPOSAL}`, ref_url })
+    assert.equal(t.ref.url, CONSOLE, `the gate's own proposal, not ${ref_url}`)
+    assert.equal(t.gates[0].url, CONSOLE)
+    assert.equal(t.gates[0].ref_url, '', "an approval gate's ref_url is never passed on")
+    assert.equal(t.ref.context, '', 'and never becomes the Context link')
+    assert.equal(t.ref.console, true, 'the server says this Open is the console')
+    assert.ok(!JSON.stringify(t).includes('evil'), `nothing of ${ref_url} reaches the thread`)
+    // under a malformed name the forged ref_url still opens nothing
+    const bad = await threadFor({ gate: 'approval:../x', ref_url })
+    assert.equal(bad.ref.url, null, `no Open from ${ref_url}`)
+    assert.equal(bad.gates[0].url, '')
+    assert.equal(bad.ref.console, undefined, 'no console flag without a console link')
+    assert.ok(!JSON.stringify(bad).includes('evil'))
+  }
+  // a ref_url that is itself a console link under this Worker, for a uuid, is taken (normalised), and wins over the
+  // name's as a usable ref_url does for every gate
+  const OTHER = '2f3e4d5c-6b7a-4899-8a7b-6c5d4e3f2a1b'
+  const own = await threadFor({ gate: 'approval:../x', ref_url: `${WORKER}/console/proposals/${OTHER.toUpperCase()}` })
+  assert.equal(own.ref.url, `${WORKER}/console/proposals/${OTHER}`)
+  assert.equal(own.gates[0].url, `${WORKER}/console/proposals/${OTHER}`)
+  assert.equal(own.ref.console, true)
+  const both = await threadFor({ gate: `approval:${PROPOSAL}`, ref_url: `${WORKER}/console/proposals/${OTHER}` })
+  assert.equal(both.ref.url, `${WORKER}/console/proposals/${OTHER}`)
   // an artifact the run left does not jump ahead of the gate's own surface
   const withArtifact = await threadFor({ gate: `approval:${PROPOSAL}` }, { extra: [ev('e3', 'artifact_registered', { title: 'ZZTEST page', notion_url: 'https://app.notion.com/p/zztest-page' })] })
   assert.equal(withArtifact.ref.url, CONSOLE)
+  // and every other surface keeps its rule: a ref_url that is a link is the Open, labelled by where it lands
+  const runs = fold([ev('e1', 'run_started'), ev('e2', 'gate_waiting', { surface: 'pending_approval', gate: 'ZZTEST gate', ref_url: 'https://airtable.com/appZZ/tblZZ/recZZ' })])
+  const pa = await toThread(runs.get(RUN), null, makeViewer({ preset: 'owner' }), surfaces, NOW, { consoleProposalsUrl: `${WORKER}/console/proposals` })
+  assert.equal(pa.ref.url, 'https://airtable.com/appZZ/tblZZ/recZZ')
+  assert.equal(pa.ref.console, undefined)
 })
 
 const { intrayRows } = await import(path.join(root, 'overlay/intray.mjs'))
@@ -137,7 +172,12 @@ test("approval: the in-tray and the panel — the label, the surface's name, App
   assert.equal(it.surface, 'Compass · approvals console', 'Approve names the surface before it opens')
   assert.equal(it.url, CONSOLE)
   assert.equal(typeof approveMod.openLabel, 'function', 'the Open label is pure, beside the surface names')
-  assert.equal(approveMod.openLabel(t.ref.url), 'Open in Compass', "the panel's Open button names Compass")
+  assert.equal(approveMod.openLabel(t.ref.url, t.ref.console), 'Open in Compass', "the panel's Open button names Compass")
+  // the label follows the server's flag, never the link's shape (review 1)
+  assert.equal(approveMod.openLabel(CONSOLE), 'Open', 'a console-shaped link without the flag is just Open')
+  assert.equal(approveMod.openLabel(`https://evil.example/console/proposals/${PROPOSAL}`), 'Open')
+  assert.equal(approveMod.openLabel('', true), 'Nothing to open')
+  assert.equal(approveMod.openLabel(CONSOLE, 'yes'), 'Open', 'only a true flag')
   // the labels the other surfaces had stay as they were
   assert.equal(approveMod.openLabel('https://airtable.com/appX/tblY/recZ'), 'Open in Airtable')
   assert.equal(approveMod.openLabel('https://app.notion.com/p/zztest'), 'Open in Notion')

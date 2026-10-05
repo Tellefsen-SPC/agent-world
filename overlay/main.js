@@ -427,7 +427,7 @@ function render(sel) {
     ${subBlock}
     ${artBlock}
     <div class="row"><span class="hint">Enter opens · N flies to the next ? · ${thread.unread ? 'A is blocked on a waiting run' : 'A hides from this view only'}${paAllowed() ? ' · P asks the PA' : ''}</span>
-      <span>${thread.ref?.context ? `<a class="ctx" href="${esc(thread.ref.context)}" target="_blank" rel="noopener">Context ↗</a>` : ''}${paAllowed() ? '<button class="ok" id="aw-ask">Ask the PA</button> ' : ''}${cardRow?.url ? '<button class="ok" id="aw-approve">Approve</button> ' : ''}<button id="aw-open" ${url ? '' : 'disabled'}>${esc(openLabel(url))}</button></span></div>`
+      <span>${thread.ref?.context ? `<a class="ctx" href="${esc(thread.ref.context)}" target="_blank" rel="noopener">Context ↗</a>` : ''}${paAllowed() ? '<button class="ok" id="aw-ask">Ask the PA</button> ' : ''}${cardRow?.url ? '<button class="ok" id="aw-approve">Approve</button> ' : ''}<button id="aw-open" ${url ? '' : 'disabled'}>${esc(openLabel(url, thread.ref?.console))}</button></span></div>`
   panel.classList.add('on')
   panel.querySelector('#aw-open')?.addEventListener('click', () => {
     if (url) window.open(url, '_blank', 'noopener')

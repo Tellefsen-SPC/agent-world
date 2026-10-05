@@ -24,10 +24,12 @@ export const SURFACE_NAME = {
 }
 export const surfaceName = (surface) => SURFACE_NAME[surface] || surface || 'its surface'
 
-/** The adapter's console deep-link for an approval-layer gate: <worker base>/console/proposals/<uuid> (compass/threads.mjs). */
-const CONSOLE_LINK = /^https:\/\/[^?#]+\/console\/proposals\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-/** The Open button's label, named by where it lands (the selection panel, overlay/main.js). */
-export const openLabel = (url) => (!url ? 'Nothing to open' : CONSOLE_LINK.test(url) ? 'Open in Compass' : /airtable\.com/.test(url) ? 'Open in Airtable' : /notion\.(com|so)/.test(url) ? 'Open in Notion' : /claude\.ai/.test(url) ? 'Open the Claude Project' : 'Open')
+/**
+ * The Open button's label, named by where it lands (the selection panel, overlay/main.js). "Open in Compass" only when
+ * the server says Open is the Compass console's page for a proposal (`thread.ref.console`, compass/threads.mjs) — never
+ * from the link's shape, which anyone who can write an event could copy onto another host (review 1, 2026-10-06).
+ */
+export const openLabel = (url, console = false) => (!url ? 'Nothing to open' : console === true ? 'Open in Compass' : /airtable\.com/.test(url) ? 'Open in Airtable' : /notion\.(com|so)/.test(url) ? 'Open in Notion' : /claude\.ai/.test(url) ? 'Open the Claude Project' : 'Open')
 
 /** What Approve will show before the surface opens: the instruction and where it is going. */
 export function approveIntent(row) {
