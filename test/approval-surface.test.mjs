@@ -117,7 +117,7 @@ test('approval: a malformed or injected gate name gives no link — never a brok
   assert.equal(threadsMod.approvalConsoleUrl(`approval:${PROPOSAL.toUpperCase()}`, `${WORKER}/console/proposals`), CONSOLE)
 })
 
-test('approval: an approval gate opens only the console under EVENTS_URL — a ref_url only when it is that console link; a forged one never opens, labels or rides along (review 1)', async () => {
+test('approval: an approval gate opens only its own proposal in the console under EVENTS_URL — a ref_url, forged or console-shaped, never opens, labels or rides along (review 1, confirmation nit 2)', async () => {
   // the approval layer never writes a ref_url on these events: anything here was written by someone else
   const forged = [
     `https://evil.example/console/proposals/${PROPOSAL}`,
@@ -147,15 +147,18 @@ test('approval: an approval gate opens only the console under EVENTS_URL — a r
     assert.equal(bad.ref.console, undefined, 'no console flag without a console link')
     assert.ok(!JSON.stringify(bad).includes('evil'))
   }
-  // a ref_url that is itself a console link under this Worker, for a uuid, is taken (normalised), and wins over the
-  // name's as a usable ref_url does for every gate
+  // and a ref_url shaped like this console's own link is ignored too (confirmation nit 2): the layer writes none, so an
+  // approval gate's link is only ever the one its own name gives — Approve can never be pointed at another proposal
   const OTHER = '2f3e4d5c-6b7a-4899-8a7b-6c5d4e3f2a1b'
-  const own = await threadFor({ gate: 'approval:../x', ref_url: `${WORKER}/console/proposals/${OTHER.toUpperCase()}` })
-  assert.equal(own.ref.url, `${WORKER}/console/proposals/${OTHER}`)
-  assert.equal(own.gates[0].url, `${WORKER}/console/proposals/${OTHER}`)
-  assert.equal(own.ref.console, true)
+  const own = await threadFor({ gate: 'approval:../x', ref_url: `${WORKER}/console/proposals/${OTHER}` })
+  assert.equal(own.ref.url, null, 'a malformed name opens nothing, whatever the ref_url')
+  assert.equal(own.gates[0].url, '')
+  assert.equal(own.ref.console, undefined)
+  assert.ok(!JSON.stringify(own).includes(OTHER))
   const both = await threadFor({ gate: `approval:${PROPOSAL}`, ref_url: `${WORKER}/console/proposals/${OTHER}` })
-  assert.equal(both.ref.url, `${WORKER}/console/proposals/${OTHER}`)
+  assert.equal(both.ref.url, CONSOLE, "the gate's own proposal, never the one the ref_url names")
+  assert.equal(both.gates[0].url, CONSOLE)
+  assert.ok(!JSON.stringify(both).includes(OTHER))
   // an artifact the run left does not jump ahead of the gate's own surface
   const withArtifact = await threadFor({ gate: `approval:${PROPOSAL}` }, { extra: [ev('e3', 'artifact_registered', { title: 'ZZTEST page', notion_url: 'https://app.notion.com/p/zztest-page' })] })
   assert.equal(withArtifact.ref.url, CONSOLE)

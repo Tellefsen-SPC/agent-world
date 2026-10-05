@@ -115,27 +115,15 @@ export function approvalConsoleUrl(gateName, consoleProposalsUrl) {
   return url
 }
 
-const UUID_ONLY = new RegExp(`^${UUID}$`)
 /**
- * A ref_url on an approval gate, taken only when it is itself a console link under this Worker's prefix — the prefix,
- * one slash, a uuid and nothing else — and rebuilt by approvalConsoleUrl. The approval layer writes no ref_url on its
- * events, so any other value was written by someone else: another host, a user@host, http, a query, a path.
- */
-function consoleRef(refUrl, consoleProposalsUrl) {
-  if (typeof refUrl !== 'string' || typeof consoleProposalsUrl !== 'string' || !consoleProposalsUrl) return null
-  if (!refUrl.startsWith(`${consoleProposalsUrl}/`)) return null
-  const id = refUrl.slice(consoleProposalsUrl.length + 1)
-  return UUID_ONLY.test(id) ? approvalConsoleUrl(`approval:${id}`, consoleProposalsUrl) : null
-}
-
-/**
- * Where one gate's Open goes. An approval-layer gate opens the Compass console under the Worker EVENTS_URL names and
- * nothing else: its ref_url only when that is the console's own link for a proposal, else the link its name gives,
- * else nothing (review 1, 2026-10-06: a forged ref_url to any host was opened and labelled "Open in Compass"). Every
- * other gate: its ref_url when that is a link.
+ * Where one gate's Open goes. An approval-layer gate opens its own proposal in the Compass console under the Worker
+ * EVENTS_URL names, built from its gate name and the configured prefix, and nothing else. Its ref_url is never read:
+ * the approval layer writes none, so one was written by someone else — a forged host (review 1, 2026-10-06), or a
+ * console-shaped link that would point Approve at another proposal (confirmation nit 2). Every other gate: its
+ * ref_url when that is a link.
  */
 export function gateUrl(gate, { consoleProposalsUrl = '' } = {}) {
-  if (gate?.surface === 'approval') return consoleRef(gate.ref_url, consoleProposalsUrl) || approvalConsoleUrl(gate.gate, consoleProposalsUrl) || ''
+  if (gate?.surface === 'approval') return approvalConsoleUrl(gate.gate, consoleProposalsUrl) || ''
   return isLink(gate?.ref_url) ? gate.ref_url : ''
 }
 
