@@ -10,12 +10,16 @@
  * — after the permission model was drafted). It is Owner-only by design: the signature is
  * Christoffer's own act on the Content row, and the status poller resolves it. Seen live
  * 2026-09-06: without it, a real content-agent draft waiting for signature rendered with no `?`.
+ *
+ * approval is Compass's approval layer (src/lib/approval, 2026-10-06): a proposal waiting for an approver is a
+ * gate_waiting with surface "approval" and gate "approval:<proposal id>", decided in the Compass console. It is an
+ * internal approval like pending_approval, so the operator taps it too; client and prime never see it.
  */
-const ALL_SURFACES = ['pending_approval', 'class_b_gate', 'decision', 'client_gate', 'content_status']
+export const ALL_SURFACES = ['pending_approval', 'class_b_gate', 'decision', 'client_gate', 'content_status', 'approval']
 
 export const PRESETS = {
   owner: { scope: 'campus', capabilities: ['view', 'tap', 'ratify', 'ask', 'layout', 'admin'], surfaces: ALL_SURFACES },
-  operator: { scope: 'campus', capabilities: ['view', 'tap'], surfaces: ['pending_approval', 'class_b_gate'] },
+  operator: { scope: 'campus', capabilities: ['view', 'tap'], surfaces: ['pending_approval', 'class_b_gate', 'approval'] },
   viewer: { scope: 'campus', capabilities: ['view'], surfaces: [] },
   client: { scope: 'town', capabilities: ['view', 'tap'], surfaces: ['client_gate'] },
   prime: { scope: 'town', capabilities: ['view', 'tap'], surfaces: ['client_gate'] },
