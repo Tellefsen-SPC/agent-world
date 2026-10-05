@@ -85,7 +85,7 @@ export function buildStill({ now, ttlMs = 2 * 3600 * 1000, runs, threadOf, proje
   const roomOfSkill = (skill) => roomForSkill(pack, skill, skillTypes.get(str(skill)) || '').room
   const children = new Map() // parent id → [runs]
   for (const r of runs.values()) if (r.parentId && runs.has(r.parentId)) (children.get(r.parentId) || children.set(r.parentId, []).get(r.parentId)).push(r)
-  const subrunsOf = (run) => (children.get(run.id) || []).map((c) => ({ id: c.id, title: c.skill || 'sub-run', unread: Boolean(threadOf.get(c.id)?.unread), running: isLive(c, threadOf.get(c.id), now, ttlMs), hasError: c.terminal === 'run_failed', gitBranch: threadOf.get(c.id)?.gitBranch || '' }))
+  const subrunsOf = (run) => (children.get(run.id) || []).map((c) => ({ id: c.id, title: c.skill || 'sub-run', unread: Boolean(threadOf.get(c.id)?.unread), running: isLive(c, threadOf.get(c.id), now, ttlMs), hasError: c.terminal === 'run_failed', waiting: Boolean(threadOf.get(c.id)?.waiting), gitBranch: threadOf.get(c.id)?.gitBranch || '' }))
 
   const threads = []
   const runningByProject = new Map() // undashed project id → [{ id, skill, subruns, at }]

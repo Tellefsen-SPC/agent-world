@@ -194,7 +194,7 @@ export function linkSubagents(threads, runs) {
   }
   for (const [parentId, kids] of children) {
     const parent = byId.get(parentId)
-    parent.subruns = kids.map((k) => ({ id: k.id, title: k.title.split(' · ')[0], unread: k.unread, running: k.running, hasError: k.hasError, gitBranch: k.gitBranch }))
+    parent.subruns = kids.map((k) => ({ id: k.id, title: k.title.split(' · ')[0], unread: k.unread, running: k.running, hasError: k.hasError, waiting: Boolean(k.waiting), gitBranch: k.gitBranch }))
     // a child that failed wears ! on the map, not ? — nothing to inherit from it
     const waiting = kids.filter((k) => k.unread && !k.hasError)
     if (waiting.length && !parent.hasError && !parent.unread) {
@@ -276,6 +276,10 @@ export async function toThread(run, row, viewer, surfaces, now = Date.now(), opt
     // 2026-09-06: a live run with an open Pending Approval gate rendered as hammering.
     running: run.terminal == null && now - run.lastAt < runningTtlMs && pending.length === 0,
     unread,
+    // The run waits on a gate, and none of its gates is this viewer's: a sub-run's line in its parent's panel says
+    // "waiting" — never "done" — and nothing about the gate (no name, surface or link reaches it). Only when true, so the
+    // Owner's threads, who taps every gate, are as they were.
+    ...(pending.length && !unread ? { waiting: true } : {}),
     hasError: run.terminal === 'run_failed',
     starred: false,
     routine: false,

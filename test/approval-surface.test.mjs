@@ -442,3 +442,59 @@ test('approval (pin): the Context link is the chosen gate\'s page too — a chat
   assert.equal(t.ref.context, PAGE, "the Context link is the same gate's page — never the newer row's")
   assert.ok(!JSON.stringify(t.ref).includes(AIRTABLE))
 })
+
+test("approval (older, sub-runs): a sub-run waiting on a gate the viewer cannot tap reads \"waiting\" in its parent's panel, with no gate detail — never \"done\"", async () => {
+  const { buildStill } = await import(path.join(root, 'server/harnesses/compass/still.mjs'))
+  const { loadPack } = await import(path.join(root, 'server/harnesses/compass/pack.mjs'))
+  const { linkSubagents } = await import(path.join(root, 'server/harnesses/compass/threads.mjs'))
+  const intray = await import(path.join(root, 'overlay/intray.mjs'))
+  assert.equal(typeof intray.subrunState, 'function', "a sub-run's line is pure, in overlay/intray.mjs")
+  const pack = loadPack('tellefsen-campus')
+  const place = (c) => ({ zone: c || 'ZZTEST HQ', planet: 'zz', pack: pack.id, town: Boolean(c) })
+  const CHILD = 'a1a1a1a1-0000-4000-8000-0000000000c2'
+  const DONE = 'a1a1a1a1-0000-4000-8000-0000000000c3'
+  const kid = (id, runId, type, payload = {}, over = {}) => ev(id, type, payload, { run_id: runId, parent_run_id: RUN, skill: 'zztest-child', ...over })
+  const runs = fold([
+    ev('e1', 'run_started', {}, { skill: 'zztest-lead' }),
+    ev('e2', 'gate_waiting', { surface: 'client_gate', gate: 'ZZTEST acceptance', ref_url: 'https://app.notion.com/p/zztest-acceptance' }, { skill: 'zztest-lead' }),
+    kid('c1', CHILD, 'run_started'),
+    kid('c2', CHILD, 'gate_waiting', { surface: 'approval', gate: `approval:${PROPOSAL}` }),
+    kid('d1', DONE, 'run_started', {}, { skill: 'zztest-finisher' }),
+    kid('d2', DONE, 'run_completed', { outcome: 'success' }, { skill: 'zztest-finisher', at: '2026-10-06T07:10:00Z' }),
+  ])
+  const scan = async (preset) => {
+    const viewer = makeViewer({ preset })
+    const threadOf = new Map()
+    for (const r of runs.values()) threadOf.set(r.id, await toThread(r, null, viewer, surfaces, NOW, { place, consoleProposalsUrl: `${WORKER}/console/proposals` }))
+    const parent = buildStill({ now: NOW, runs, threadOf, pack, place, viewer }).threads.find((t) => t.id === RUN)
+    return { parent, threadOf }
+  }
+  const marks = (x) => ['approval:', '"approval"', 'Compass', 'console', PROPOSAL].filter((s) => JSON.stringify(x).includes(s))
+
+  for (const preset of ['client', 'prime']) {
+    const { parent, threadOf } = await scan(preset)
+    assert.ok(parent?.unread, `${preset}: the parent is their request`)
+    const child = parent.subruns.find((s) => s.id === CHILD)
+    assert.deepEqual([child.unread, child.running, child.hasError, child.waiting, child.gitBranch], [false, false, false, true, ''], `${preset}: waiting, nothing more`)
+    assert.equal(intray.subrunState(child), 'waiting · not yours to tap', `${preset}: the parent's panel says so`)
+    assert.equal(intray.subrunState(parent.subruns.find((s) => s.id === DONE)), 'done', 'a sub-run that finished is done')
+    assert.deepEqual(marks(parent.subruns), [], `${preset}: no gate detail of the child's proposal`)
+    // the M1 path (linkSubagents) says the same
+    const linked = linkSubagents([...threadOf.values()], runs).find((t) => t.id === RUN)
+    assert.equal(intray.subrunState(linked.subruns.find((s) => s.id === CHILD)), 'waiting · not yours to tap')
+    assert.deepEqual(marks(linked.subruns), [])
+  }
+  // the Owner holds the child's ?: the line says what to do, as before
+  const { parent } = await scan('owner')
+  assert.equal(intray.subrunState(parent.subruns.find((s) => s.id === CHILD)), '? approve in Compass')
+  // the rest of the line, unchanged: failed first, then waiting on you, then working
+  assert.equal(intray.subrunState({ hasError: true, unread: true, waiting: true }), '! failed')
+  assert.equal(intray.subrunState({ unread: true }), '? waiting on you')
+  assert.equal(intray.subrunState({ running: true }), '⚒ working')
+  assert.equal(intray.subrunState({}), 'done')
+  // and the panel draws it (main.js needs a DOM, so its wiring is read, not run)
+  const main = fs.readFileSync(path.join(root, 'overlay/main.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  assert.match(main, /import\s*\{[^}]*\bsubrunState\b[^}]*\}\s*from\s*'\.\/intray\.mjs'/)
+  assert.match(main, /esc\(subrunState\(s\)\)/, "the parent's panel draws each sub-run's line with it")
+  assert.ok(!/'⚒ working' : 'done'/.test(main), 'and keeps no line of its own')
+})

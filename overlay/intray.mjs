@@ -86,6 +86,20 @@ export function panelAsk(thread) {
 }
 
 /**
+ * A sub-run's line in its parent's panel (overlay/main.js): failed, then waiting on you (with what to do), then
+ * working, then waiting on someone else — with no gate detail, since the adapter sends none (`waiting`, set on the
+ * server) — else done. Before 2026-10-06 a sub-run waiting on a gate this viewer cannot tap read "done".
+ */
+export function subrunState(s) {
+  if (!s || typeof s !== 'object') return ''
+  if (s.hasError) return '! failed'
+  if (s.unread) return `? ${s.gitBranch || 'waiting on you'}`
+  if (s.running) return '⚒ working'
+  if (s.waiting) return 'waiting · not yours to tap'
+  return 'done'
+}
+
+/**
  * U33 (ES-6.8): the hand-raise as a tray line. A skill silent 30 d that the pack wants (its override names a wants value
  * an Active project's Tech Stack contains) is a dusty row in its room panel and a lowest-precedence line here — never a
  * figure, so N never lands on it. `dusty` are the sidecar's dusty skill rows: [{ name, room, wants }].

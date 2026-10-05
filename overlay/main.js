@@ -51,7 +51,7 @@ import { createLabel, Plot, PLOT_PALETTE, hashString, worldToHex } from '../src/
 import { artifactRows, BubbleTracker, newestArtifactAt, bubbleEligible } from './artifacts.mjs'
 import { shelfSections, projectTab } from './archive.mjs'
 import { foldSpend, spendLineFor, estLineFor, townLines, todayLineFor, todayIsCurrent, showSpend, summary as spendSummary } from './spend.mjs'
-import { intrayRows, nextRow, withHands, panelAsk } from './intray.mjs'
+import { intrayRows, nextRow, withHands, panelAsk, subrunState } from './intray.mjs'
 import { ApproveTracker, approveIntent, openLabel } from './approve.mjs'
 import { mayAsk, subjectsFor, pickSubject, requestBody, initialPa, paReduce, panelModel, MAX_QUESTION } from './pa.mjs'
 
@@ -416,7 +416,7 @@ function render(sel) {
   const subs = Array.isArray(thread.subruns) ? thread.subruns : []
   const subBlock = subs.length
     ? `<div class="arts"><b>${subs.length} sub-run${subs.length === 1 ? '' : 's'}</b>${subs
-        .map((s) => `<div class="sub" data-sub="${esc(s.id)}" title="select this sub-run"><span>${esc(s.title)}</span><span class="st">${s.hasError ? '! failed' : s.unread ? '? ' + esc(s.gitBranch || 'waiting on you') : s.running ? '⚒ working' : 'done'}</span></div>`)
+        .map((s) => `<div class="sub" data-sub="${esc(s.id)}" title="select this sub-run"><span>${esc(s.title)}</span><span class="st">${esc(subrunState(s))}</span></div>`)
         .join('')}</div>`
     : ''
   panel.innerHTML = `
