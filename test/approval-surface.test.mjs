@@ -114,3 +114,52 @@ test('approval: a gate that carries a usable ref_url opens it, as every gate doe
   const withArtifact = await threadFor({ gate: `approval:${PROPOSAL}` }, { extra: [ev('e3', 'artifact_registered', { title: 'ZZTEST page', notion_url: 'https://app.notion.com/p/zztest-page' })] })
   assert.equal(withArtifact.ref.url, CONSOLE)
 })
+
+const { intrayRows } = await import(path.join(root, 'overlay/intray.mjs'))
+const approveMod = await import(path.join(root, 'overlay/approve.mjs'))
+
+test("approval: the in-tray and the panel — the label, the surface's name, Approve to the gate's own proposal, \"Open in Compass\"", async () => {
+  const t = await threadFor({ gate: `approval:${PROPOSAL}` })
+  const [row] = intrayRows([t])
+  assert.equal(row.what, 'approve in Compass', 'the tray row says what to do')
+  assert.equal(row.surface, 'approval')
+  assert.equal(row.url, CONSOLE, 'the row has an Approve, to the console')
+  const it = approveMod.approveIntent(row)
+  assert.equal(it.surface, 'Compass · approvals console', 'Approve names the surface before it opens')
+  assert.equal(it.url, CONSOLE)
+  assert.equal(typeof approveMod.openLabel, 'function', 'the Open label is pure, beside the surface names')
+  assert.equal(approveMod.openLabel(t.ref.url), 'Open in Compass', "the panel's Open button names Compass")
+  // the labels the other surfaces had stay as they were
+  assert.equal(approveMod.openLabel('https://airtable.com/appX/tblY/recZ'), 'Open in Airtable')
+  assert.equal(approveMod.openLabel('https://app.notion.com/p/zztest'), 'Open in Notion')
+  assert.equal(approveMod.openLabel('https://claude.ai/project/zztest'), 'Open the Claude Project')
+  assert.equal(approveMod.openLabel('https://zztest.example/elsewhere'), 'Open')
+  assert.equal(approveMod.openLabel(''), 'Nothing to open')
+  assert.equal(approveMod.openLabel(null), 'Nothing to open')
+
+  // two proposals on one run: the row is the oldest gate, and its Approve opens that proposal — not the newest
+  const SECOND = '1e2d3c4b-5a69-4788-9766-554433221100'
+  const two = await threadFor({ gate: `approval:${PROPOSAL}` }, { extra: [ev('e3', 'gate_waiting', { surface: 'approval', gate: `approval:${SECOND}` }, { at: '2026-10-06T07:30:00Z' })] })
+  assert.equal(two.ref.url, `${WORKER}/console/proposals/${SECOND}`, 'Open goes to the newest gate, as for every run')
+  const [r2] = intrayRows([two])
+  assert.equal(r2.gate, `approval:${PROPOSAL}`)
+  assert.equal(r2.url, CONSOLE, "the row's Approve opens its own proposal")
+
+  // a malformed name: no Approve, even when the run carries some other link
+  const bad = await threadFor({ gate: 'approval:../x' }, { extra: [ev('e3', 'artifact_registered', { title: 'ZZTEST page', notion_url: 'https://app.notion.com/p/zztest-page' })] })
+  const [r3] = intrayRows([bad])
+  assert.equal(r3.what, 'approve in Compass')
+  assert.equal(r3.url, '', 'Approve on an approval gate goes to its proposal or nowhere')
+  assert.equal(approveMod.approveIntent(r3), null)
+})
+
+test('approval: never cross-checked — the layer closes its own gates with gate_passed, and the ledger says so (a pin)', async () => {
+  const { createSurfaces, crossCheckable } = await import(path.join(root, 'server/harnesses/compass/surfaces.mjs'))
+  assert.equal(crossCheckable({ surface: 'approval', ref_url: CONSOLE }), false)
+  const s = createSurfaces({ airtableToken: 'zztest', notionToken: 'zztest', airtableBaseId: 'appZZTEST' }, { fetchImpl: async () => assert.fail('an approval gate is never read on a surface') })
+  assert.equal(await s.gateResolved({ run_id: RUN, gate: `approval:${PROPOSAL}`, surface: 'approval', ref_url: CONSOLE }), false)
+  // its own gate_passed, read from the ledger, is what closes it
+  const closed = await threadFor({ gate: `approval:${PROPOSAL}` }, { extra: [ev('e3', 'gate_passed', { surface: 'approval', gate: `approval:${PROPOSAL}`, result: 'approved' }, { at: '2026-10-06T07:10:00Z' })] })
+  assert.deepEqual(closed.gates, [])
+  assert.equal(closed.unread, false)
+})

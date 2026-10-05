@@ -52,7 +52,7 @@ import { artifactRows, BubbleTracker, newestArtifactAt, bubbleEligible } from '.
 import { shelfSections, projectTab } from './archive.mjs'
 import { foldSpend, spendLineFor, estLineFor, townLines, todayLineFor, todayIsCurrent, showSpend, summary as spendSummary } from './spend.mjs'
 import { intrayRows, nextRow, withHands } from './intray.mjs'
-import { ApproveTracker, approveIntent } from './approve.mjs'
+import { ApproveTracker, approveIntent, openLabel } from './approve.mjs'
 import { mayAsk, subjectsFor, pickSubject, requestBody, initialPa, paReduce, panelModel, MAX_QUESTION } from './pa.mjs'
 
 const LABEL = {
@@ -270,7 +270,6 @@ const ago = (ms) => {
 const shortModel = (m) => String(m || '').replace(/^claude-/, '')
 /** The adapter encodes milestone progress as sizeBytes = 10^(3 + 3.5·p); this is the exact inverse. */
 const progressOf = (bytes) => Math.max(0, Math.min(1, (Math.log10(Math.max(1, Number(bytes) || 1)) - 3) / 3.5))
-const openLabel = (url) => (!url ? 'Nothing to open' : /airtable\.com/.test(url) ? 'Open in Airtable' : /notion\.(com|so)/.test(url) ? 'Open in Notion' : /claude\.ai/.test(url) ? 'Open the Claude Project' : 'Open')
 
 /** The thread for the selected figure — the live one from the roster, else the agent's own copy. */
 function selection() {

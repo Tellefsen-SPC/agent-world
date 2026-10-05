@@ -42,8 +42,10 @@ export function intrayRows(threads) {
         surface: gate?.surface || '',
         what: gate?.what || t.gitBranch || '',
         // the row's own gate's surface — a run can leave several gates and Open (U5) goes to the newest; a
-        // session gate has no surface of its own, so it takes the run's link (the Claude Project or the terminal)
-        url: (gate && gate.surface !== 'class_b_gate' && gate.ref_url) || t.ref?.url || '',
+        // session gate has no surface of its own, so it takes the run's link (the Claude Project or the terminal).
+        // An approval-layer gate carries its own link (its proposal in the Compass console, from the adapter): Approve
+        // opens that proposal or nothing, never another link the run happens to carry.
+        url: gate?.surface === 'approval' ? gate.url || '' : (gate && gate.surface !== 'class_b_gate' && gate.ref_url) || t.ref?.url || '',
         // the oldest open gate; a thread whose adapter predates U14 falls back to its last activity
         at: num(gate?.at) || num(t.gateAt) || num(t.lastActivityAt),
         left: Array.isArray(t.gates) ? t.gates.length : 1,
