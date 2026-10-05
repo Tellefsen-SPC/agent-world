@@ -329,5 +329,43 @@ Absorbed 2026-09-07 by U29 (ES-6.4): prospects are not plots; the warmth (1.0 / 
   - the bearer token anywhere in the server log.
 - **Cleanup:** the real `EVENTS_URL` back in `.env`; `scripts/zztest-seed.sh --clean`.
 
+## V-U38 — An approval-layer gate opens the Compass console
+- **Runs only once the Compass approvals console is deployed:** the `compass-console` branch of
+  `tellefsen-compass-mcp` merged, and the Worker deployed from `main`. Until then the link answers 404. This check
+  waits; none of it can be run earlier.
+- **Setup:**
+  - `EVENTS_URL` in `.env` is the Worker's `https` address, ending in `/events`. `WORLD_VIEWER_PRESET` is `owner`
+    or unset.
+  - A proposal waiting for an approver inside the ledger window:
+    - Preferably a ZZTEST one: actor `zztest-approval-check`, client `ZZTEST Client`. That needs a Worker with the
+      demo `memory` adapter, such as a preview. See Compass `docs/approval-layer.md`, "Synthetic checks clean up".
+    - On production, which has no memory adapter, use a proposal that is already waiting. Open it only; do not
+      decide it.
+- **Do:** `./dev.sh`, open http://127.0.0.1:5274 and press I. Select the row **? Approve · Compass**. Read the
+  panel, press Approve, then **Open the surface ↗**.
+- **See:**
+  - The tray row reads `approval:<proposal id> — approve in Compass` and has an Approve button.
+  - The panel says "A proposal is waiting for an approver. Open it in the Compass console and approve, edit or reject
+    it." Its button reads **Open in Compass**.
+  - Approve first shows **Compass · approvals console**. Then a tab opens
+    `<Worker>/console/proposals/<proposal id>`, on the same host as `EVENTS_URL` and with the id from the gate's
+    name. After the Compass Access sign-in, it shows that proposal.
+  - ZZTEST proposal only: reject it in the console. Within one poll (about 15 s) the row and the `?` are gone. The
+    `gate_passed` in `GET /ledger/scan` is the approval layer's own; the world wrote nothing.
+  - Under `WORLD_VIEWER_PRESET=client`, the row is not there.
+- **Fail looks like:**
+  - no row, or a row with no Approve;
+  - a link to another host, an `http://` link, or anything after the id;
+  - a 404 once the console is deployed;
+  - a `?` that stays after the decision.
+- **Cleanup (ZZTEST proposal only):** on the Worker you used, after `set -a; . ./.env; set +a`, run:
+
+  ```
+  curl -s -X DELETE -H "Authorization: Bearer $EVENTS_BEARER_TOKEN" "${EVENTS_URL%/events}/ledger/zztest"
+  ```
+
+  It deletes `zztest-*` runs and nothing else. The proposal's own row stays in Compass as the operational record.
+  Then put the real `EVENTS_URL` back if you pointed it at a preview.
+
 ## Cadence and evidence
 Per unit: the check above, minutes each. Per milestone: when U8 verifies, re-run V-U1 … V-U7 and V-U9 in one sitting (the regression pass) before `milestone-close` flips M1 to Done. **Regression before milestone-close M2:** re-run V-U1–V-U6, V-U9–V-U11, V-U12W and V-U12–V-U20 in one sitting. **M2b batch sitting (2026-09-07):** first the re-based V-U12, V-U13, V-U14, V-U15, V-U18, then V-U28 … V-U34, then V-U35 (Sitting S, Part V). Evidence per unit in the Notion unit table: the date, plus a link — the Compass `run_id` for V-U2, a screenshot for V-U3/V-U6, the recording for V-U8.

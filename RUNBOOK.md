@@ -34,6 +34,7 @@ Open http://127.0.0.1:5274. Stop it with Ctrl-C in that terminal.
 
 - Use `./dev.sh`, not `npm run dev`. Plain `npm run dev` does not read `.env`, so the world comes up empty.
 - To see what the adapter is doing, start it with its log on: `DEBUG=world ./dev.sh`.
+- A **? Approve · Compass** request is a proposal from Compass's approval layer: Approve and **Open in Compass** open it in the Compass approvals console (`<Worker>/console/proposals/<id>`), which asks you to sign in with Compass Access first; decide it there and the `?` clears on the next poll.
 - To check the world's own view of Compass, while it runs:
 
 ```

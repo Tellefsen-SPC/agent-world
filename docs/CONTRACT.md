@@ -14,6 +14,31 @@ Agent World is a renderer over five documents (four Worker reads and the pack), 
 
 The adapter reads exactly five Worker routes — `/ledger/scan`, `/world/substrate`, `/world/spend` (ES-4.13, 2026-09-08), `/ledger/cost` (U37, 2026-10-04) and `/events/stream` (U7, 2026-10-04) — and asks one, `/ask` (U16, 2026-10-05): six in all, and `npm test` fails if `server/harnesses/compass.mjs` or `server/harnesses/compass/**` names any other (`/actions`, `/events`, `/ledger/<anything else>`). `/ask` is fetched only from `compass/ask.mjs`, to `cfg.askUrl` verbatim, and it is the adapter's one POST to the Worker: the invariant "the adapter never writes" allows exactly that line, because the ask's events and ledger row are the Worker's record of its own model call, not a write by the world. Every Worker URL is derived from `EVENTS_URL` in `compass/config.mjs` and nowhere else; the stream URL is requested as derived, with no query (the resume point travels in the `Last-Event-ID` header). `WORLD_STREAM=0` switches the stream off; the world then runs on its polls alone, as it did before U7. The seed script may `POST /events` and `DELETE /ledger/zztest`; it is a test fixture, not the adapter. Notion and Airtable are read with GETs and the one guarded data-source query (`compass/notion.mjs`, ids in `compass/notion-sources.mjs`).
 
+**Approval-layer gates and the Compass console (2026-10-06).** Compass's approval layer (`src/lib/approval`,
+`vendor/approval-layer`) writes `gate_waiting` and `gate_passed` with `payload.surface: "approval"` and
+`payload.gate: "approval:<proposal id>"` (plus `payload.ref`, the same id, and no `ref_url`).
+`spec/ledger-scan.v1.json` names the surface since 2026-10-06, an additive change in place.
+- **The deep-link.** Such a gate opens `<worker base>/console/proposals/<proposal id>`, the proposal's page in the
+  Compass approvals console (Compass branch `compass-console`).
+  - `<worker base>` is `EVENTS_URL` with its `/events` tail removed, as for every route. `compass/config.mjs` derives
+    the prefix as `consoleProposalsUrl`, and only from an `https` `EVENTS_URL` ending in `/events` with no user,
+    password, query or fragment. Otherwise there is no prefix and no link.
+  - `<proposal id>` is the part after `approval:`. It must be a uuid in the canonical 8-4-4-4-12 hex form: the layer
+    mints it with `crypto.randomUUID`, and the `proposals` table's id is a `uuid` column. It is lowercased and
+    URL-encoded (`compass/threads.mjs` `approvalConsoleUrl`).
+  - Any other name gives no link: `approval:`, a path, markup, a space, `?`, `#`, a percent escape. The `?` stays,
+    with nothing to open.
+- **A `ref_url` still wins.** A gate that carries a `ref_url` that is a link opens it, as every gate does. The console
+  is the fallback for `approval` only. The thread's `gates[]` entry for an approval gate carries the link as `url`,
+  so the in-tray's Approve opens that gate's own proposal or nothing.
+- **A link, never a read.** The console is a page for a person, behind a Compass Access sign-in. The adapter never
+  fetches it, and it is not one of the six routes above. The contract guard fails a fetch of `consoleProposalsUrl`,
+  or a rebuild of it, like any Worker URL that is not a read.
+- **No cross-check.** The layer writes `gate_passed`, with the same gate name, when a proposal is decided. That is the
+  first step of `decide`, before the proposal's status moves. The `?` leaves within a poll of it (`fold.mjs`), and
+  `surfaces.mjs` never reads the console.
+- **Who sees it.** The Owner and operator presets tap `approval`. Client, prime and viewer never see it.
+
 Re-capture the three live responses after a Worker deploy with `scripts/capture-contract.sh` (`--substrate-only`, `--spend-only` for one of them) (bearer from `.env`; actors scrubbed, notes trimmed) and re-run `npm test`.
 
 `GET /ledger/cost` has no live capture yet: Compass U5 is merged but not deployed, so `test/contract.test.mjs` validates `spec/ledger-cost.v1.json` against a synthetic answer made by the Worker's own handler, and its live check is skipped. Once U5 is deployed, run `scripts/capture-contract.sh --cost-only` once. It reads `GET /ledger/cost?days=1&include_test=1` into `test/fixtures/ledger-cost.live.json`. The repo is public, so the script keeps a value only at its known path in the contract, and only in its expected shape:
