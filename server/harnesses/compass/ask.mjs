@@ -226,24 +226,34 @@ export function retryAfterOf(value, now = Date.now()) {
 // actor — exact word or phrase matches only — and shows "Withheld: it named a person", with no text. The names never
 // leave the server: the page holds no actor (Annex III), and nothing here logs one.
 
-/** Actors that are machines, not people: what the hooks, the Worker, the PA, the sweeps and the seed write. */
-export const MACHINE_ACTORS = Object.freeze(['world', 'worker', 'claude_code', 'claude-code', 'claude', 'cowork', 'cowork_scheduled', 'system', 'zztest', 'sweep', 'poller', 'hook', 'hooks', 'scheduler', 'cron', 'n8n', 'make', 'zapier', 'github', 'ci', 'bot', 'agent', 'unknown', 'none', 'null'])
+/**
+ * Actors that are systems, not people — what the hooks, the Worker, the PA, the sweeps, the coordinator and the seed
+ * write, and the live capture's scrubbed placeholder ("actor"). Fixed here, and anything starting "zztest" (the test
+ * prefix) besides. Decided 2026-10-05 (confirmation review): the backstop ignores non-person actors, so "the Cowork
+ * job", "Agent World" or "Actor fields" are words, not names.
+ */
+export const SYSTEM_ACTORS = Object.freeze([
+  'world', 'cowork', 'worker', 'cron', 'coordinator', 'n8n', 'zapier', 'claude', 'hook', 'session_hook', 'system', 'actor',
+  'claude_code', 'claude-code', 'cowork_scheduled', 'cowork_manual', 'sweep', 'poller', 'hooks', 'scheduler', 'make', 'github', 'ci', 'bot', 'agent', 'unknown', 'none', 'null',
+])
 const LETTER = /\p{L}/u
 /**
- * The actor values that may be people: not a machine actor, not a skill or one of its steps (`skill:step`, the
- * approval layer's proposers), not a place the world names, at least two letters. Trimmed, de-duplicated, longest first.
+ * The actor values that may be people. Skipped: a system actor (SYSTEM_ACTORS, or a value starting "zztest"); a value
+ * equal to a name the world already knows — a skill or one of its steps (`skill:step`, the approval layer's
+ * proposers), a trigger value, a client or town, a place, or another substrate term (companies and their keys, rooms,
+ * the campus); one with fewer than two letters. Compared without case. Trimmed, de-duplicated, longest first.
  */
-export function personNames(actors = [], { skills = [], places = [] } = {}) {
+export function personNames(actors = [], { skills = [], places = [], triggers = [], clients = [], terms = [] } = {}) {
   const lower = (v) => String(v || '').trim().toLowerCase()
-  const machine = new Set(MACHINE_ACTORS)
+  const system = new Set(SYSTEM_ACTORS)
   const skillSet = new Set(skills.map(lower).filter(Boolean))
-  const placeSet = new Set(places.map(lower).filter(Boolean))
+  const knownSet = new Set([...skillSet, ...[...places, ...triggers, ...clients, ...terms].map(lower).filter(Boolean)])
   const out = new Map()
   for (const a of actors) {
     const name = String(a ?? '').trim()
     const key = name.toLowerCase()
     if (name.length < 2 || name.length > 200 || [...name].filter((c) => LETTER.test(c)).length < 2) continue
-    if (machine.has(key) || skillSet.has(key) || placeSet.has(key) || [...skillSet].some((k) => key.startsWith(`${k}:`))) continue
+    if (system.has(key) || key.startsWith('zztest') || knownSet.has(key) || [...skillSet].some((k) => key.startsWith(`${k}:`))) continue
     if (!out.has(key)) out.set(key, name) // the first spelling seen; matching is by the rules below, not by case
   }
   return [...out.values()].sort((a, b) => b.length - a.length)

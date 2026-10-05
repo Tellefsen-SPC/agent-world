@@ -18,6 +18,15 @@ const events = [
   ev('e2', 'gate_waiting', 'zztest-approver:propose', { gate: 'ZZTEST gate', surface: 'pending_approval', ref_url: 'https://airtable.com/appZZ/tblZZ/recZZ' }),
   ev('e3', 'gate_passed', 'Zed Zztestperson', { gate: 'ZZTEST gate', surface: 'pending_approval', ref_url: 'https://airtable.com/appZZ/tblZZ/recZZ', result: 'approved' }),
   ev('e4', 'run_completed', 'world', { outcome: 'success' }),
+  // confirmation review 2: what a real window also holds — system actors, the live capture's scrubbed placeholder, the
+  // seed, a trigger and a client written as actors — and one more person, Christoffer
+  { ...ev('e5', 'run_started', 'actor'), run_id: 'b2b2b2b2-0000-4000-8000-0000000000bb', client: 'ZZTEST Town', trigger: 'cowork_manual' },
+  { ...ev('e6', 'gate_waiting', 'coordinator', { gate: 'ZZTEST gate 2', surface: 'decision', ref_url: 'https://www.notion.so/zztest' }), run_id: 'b2b2b2b2-0000-4000-8000-0000000000bb', client: 'ZZTEST Town' },
+  { ...ev('e7', 'gate_passed', 'christoffer', { gate: 'ZZTEST gate 2', surface: 'decision', ref_url: 'https://www.notion.so/zztest', result: 'approved' }), run_id: 'b2b2b2b2-0000-4000-8000-0000000000bb', client: 'ZZTEST Town' },
+  { ...ev('e8', 'run_completed', 'session_hook', { outcome: 'success' }), run_id: 'b2b2b2b2-0000-4000-8000-0000000000bb', client: 'ZZTEST Town' },
+  ev('e9', 'artifact_registered', 'zztest-seed', { title: 'ZZTEST artifact' }),
+  ev('e10', 'artifact_registered', 'cowork_manual', { title: 'ZZTEST artifact 2' }),
+  ev('e11', 'artifact_registered', 'ZZTEST Town', { title: 'ZZTEST artifact 3' }),
 ]
 
 test('the scan collects every actor; an answer naming one as a person is withheld — places, skills and machine actors are not people', { timeout: 15000 }, async () => {
@@ -42,7 +51,7 @@ test('the scan collects every actor; an answer naming one as a person is withhel
     process.env.WORLD_STREAM = '0'
     const { default: harness, _internals } = await import(path.join(root, 'server/harnesses/compass.mjs'))
     await harness.scanThreads()
-    assert.deepEqual([..._internals.lastScan().actors].sort(), ['Zed Zztestperson', 'cowork', 'world', 'zztest-approver:propose'], 'every actor in the window, the tap\'s included')
+    assert.deepEqual([..._internals.lastScan().actors].sort(), ['ZZTEST Town', 'Zed Zztestperson', 'actor', 'christoffer', 'coordinator', 'cowork', 'cowork_manual', 'session_hook', 'world', 'zztest-approver:propose', 'zztest-seed'], 'every actor in the window, the taps\' included')
     const ask = (text) => ((answer = text), _internals.ask.ask({ question: 'What is waiting here?', context: { town: 'ZZTEST Client' } }))
 
     const named = await ask('ZZTEST Client has one open gate. Zed Zztestperson approved the last one.')
@@ -51,10 +60,19 @@ test('the scan collects every actor; an answer naming one as a person is withhel
     assert.equal(named.body.run_id, cases.answer.body.run_id, 'the ask\'s own run stays, so it can be found on the Worker')
     assert.ok(!JSON.stringify(named.body).includes('Zztestperson'), 'no text of the answer reaches the page')
 
+    // confirmation review 2: the person is still withheld, by first name and possessive
+    const christoffer = await ask("Alpha waits on Christoffer's approval.")
+    assert.deepEqual([christoffer.body.reason, christoffer.body.answer], ['named_person', 'Withheld: it named a person.'])
     for (const fine of [
       'ZZTEST Client has one open gate, from zztest-approver; the world shows it on the Pending Approval surface.',
       'The cowork run finished; the Worker recorded it.',
       'zztest-approver:propose is waiting.',
+      // system actors and names the world knows are words here, not people (2ea5ded withheld the last four)
+      'The Cowork job ran at 05:30.',
+      'Agent World shows two open gates.',
+      'ZZTEST Town has 2 open gates',
+      'Actor fields are never shown on the map.',
+      'The Coordinator posted it; the Session_hook closed it; the cowork_manual trigger fired once.',
     ]) {
       const ok = await ask(fine)
       assert.equal(ok.body.reason, undefined, `${fine} — places, skills and machine actors are not people`)

@@ -405,10 +405,10 @@ test('U16W (review 9): a body over 8 KB gets its 413 before the connection close
 })
 
 test('U16 (review 5): the backstop\'s names — machine actors, skills and their steps, and places are never people; the rest are, longest first', async () => {
-  const { personNames, MACHINE_ACTORS } = await import(path.join(root, 'server/harnesses/compass/ask.mjs'))
+  const { personNames, SYSTEM_ACTORS } = await import(path.join(root, 'server/harnesses/compass/ask.mjs'))
   const names = personNames(['zztest', 'world', 'Worker', 'claude_code', 'cowork', 'zztest-approver', 'zztest-approver:propose', 'ZZTEST Client', '  Ann Zztest  ', 'ann zztest', 'Bo', 'x', '42', 'a.b@zztest.example'], { skills: ['zztest-approver'], places: ['ZZTEST Client'] })
   assert.deepEqual(names, ['a.b@zztest.example', 'Ann Zztest', 'Bo'])
-  for (const m of ['world', 'worker', 'claude_code', 'cowork', 'zztest']) assert.ok(MACHINE_ACTORS.includes(m), m)
+  for (const m of ['world', 'worker', 'claude_code', 'cowork']) assert.ok(SYSTEM_ACTORS.includes(m), m)
 })
 
 test('U16 (review 5): an exact word or phrase only — a name inside another word, a lower-case single name, or a near-name is not a match', async () => {
@@ -441,6 +441,22 @@ test('U16 (review 5): the forwarder withholds an answer that names a person — 
   } finally {
     await worker.close()
   }
+})
+
+test('U16 (confirmation review 2): the backstop skips system actors and every name the world already knows — "The Cowork job", "Agent World", "ZZTEST Town", "Actor fields" pass; "Christoffer\'s approval" is still withheld', async () => {
+  const { personNames, namesPerson, SYSTEM_ACTORS } = await import(path.join(root, 'server/harnesses/compass/ask.mjs'))
+  for (const a of ['world', 'cowork', 'worker', 'cron', 'coordinator', 'n8n', 'zapier', 'claude', 'hook', 'session_hook', 'system', 'actor']) assert.ok(SYSTEM_ACTORS.includes(a), `${a} is a system actor`)
+  // what a real window holds: machines, the capture's scrubbed placeholder, the seed, a trigger and a client used as
+  // actors, a skill's step, a substrate name — and one person
+  const actors = ['world', 'World', 'cowork', 'Cowork', 'worker', 'cron', 'coordinator', 'n8n', 'zapier', 'claude', 'hook', 'session_hook', 'system', 'actor', 'zztest', 'zztest-seed', 'ZZTEST-bot', 'cowork_manual', 'ZZTEST Town', 'zztest-approver:propose', 'Agent World', 'christoffer']
+  const known = { skills: ['zztest-approver'], triggers: ['cowork_manual', 'cowork_scheduled', 'chat'], clients: ['ZZTEST Town'], places: ['ZZTEST Client'], terms: ['Agent World', 'ZZTEST Home Co'] }
+  const names = personNames(actors, known)
+  assert.deepEqual(names, ['christoffer'], 'only the person is left')
+  for (const fine of ['The Cowork job ran at 05:30.', 'Agent World shows two open gates.', 'ZZTEST Town has 2 open gates', 'Actor fields are never shown.', 'The Coordinator and the session_hook are machines; the World answered.', 'cowork_manual fired once.']) {
+    assert.equal(namesPerson(fine, names), false, fine)
+  }
+  assert.equal(namesPerson("Alpha waits on Christoffer's approval.", names), true, 'a person is still withheld')
+  assert.equal(namesPerson('Alpha waits on Christoffer’s approval.', names), true, 'with a curly apostrophe too')
 })
 
 test('U16W (confirmation review 4): the bearer is cut out BEFORE any string is cut short — one straddling the 1000-character detail or the 20,000-character answer leaks no part of itself', async () => {

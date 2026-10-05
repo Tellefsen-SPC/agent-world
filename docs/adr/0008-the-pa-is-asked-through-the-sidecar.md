@@ -50,9 +50,20 @@ holds names and numbers only (`overlay/zones.mjs`: "No token ever reaches this f
   and no refs, and keeps only the PA's run id, model and counts. Rules, `compass/ask.mjs`:
   - exact word or phrase matches only, never part of a word;
   - a single plain word only where it is capitalised, so an actor "will" does not withhold every "will";
-  - machine actors (`world`, `worker`, `claude_code`, `cowork`, `zztest`, …), skills and their steps, and the world's
-    places are never people.
+  - non-person actors are ignored (decided 2026-10-05, confirmation review). That means the fixed system actors
+    (`world`, `cowork`, `worker`, `cron`, `coordinator`, `n8n`, `zapier`, `claude`, `hook`, `session_hook`, `system`,
+    `actor` — the live capture's scrubbed placeholder — and the rest of `SYSTEM_ACTORS` in `compass/ask.mjs`),
+    anything starting `zztest`, and any value equal to a name the world already knows: a skill or one of its steps, a
+    trigger value, a client or town, a company or its key, a room, the campus. So "The Cowork job…", "Agent World
+    shows…" and "ZZTEST Town has 2 open gates" pass. Before this, the last two, "Actor fields…" and "the
+    Coordinator…" were withheld.
 - The names stay on the server, in memory with the scan. The page holds no actor and nothing logs one.
+- **It withholds answers that name Christoffer, and that is intended.** His handle is an actor in the ledger (the
+  taps he makes), so "Alpha waits on Christoffer's approval." is withheld, and the panel shows "Withheld: it named a
+  person". The reason: the rule is that the PA never names a person. An exception for the Owner would be a list of
+  people the PA may name, and that list would grow. The same answer said by place ("Alpha waits on the ZZTEST
+  Pending Approval row") goes through, and the in-tray already shows whose surface a gate is on. If Christoffer
+  wants his own name allowed, that is a decision for him to take knowingly, not a default.
 - It misses:
   - names outside the 14-day window, or never in the ledger;
   - a first name alone when the actor is a full name;
