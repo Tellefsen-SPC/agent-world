@@ -14,9 +14,10 @@
 #                                                   the files. Without it (a helper session): removes the files, posts nothing.
 #                                                   U35 (ES-4.13): the payload carries usage summed from the session transcript
 #                                                   (hook input transcript_path; on the reconcile path ~/.claude/projects/<slug>/
-#                                                   <session_id>.jsonl) — assistant entries' message.usage, deduplicated on
-#                                                   message.id (the last entry per id wins: streaming writes several), the last
-#                                                   message.model seen, source "transcript". No transcript → no usage key.
+#                                                   <session_id>.jsonl) and its subagents' transcripts — usage_json below. No
+#                                                   transcript → no usage key. A sum that runs past LEDGER_USAGE_TIMEOUT (3 s) is
+#                                                   dropped: run_completed goes without usage and says usage_skipped "timeout",
+#                                                   so the 10 s SessionEnd budget is never spent before the run ends.
 #   ledger.sh usage <path>    (tests, the ledger row) — prints that usage object for a transcript, or nothing.
 # Reads the hook's JSON input on stdin. Never blocks the session: every failure exits 0 quietly.
 # HOOK_DRY_RUN=1 prints each would-be POST body on stdout instead of sending it (never prints the token).
@@ -33,26 +34,97 @@
 set -u
 EVENT="${1:-}"
 HERE="$(cd "$(dirname "$0")/../.." && pwd)"
-# usage_json <transcript path> → the usage object for run_completed (U35), or nothing when the file is missing or unreadable.
-# Sums assistant entries' message.usage {input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens},
-# deduplicated on message.id (the last entry per id wins), plus the last message.model seen in file order. Never a prompt,
-# never a tool input, never a transcript line — four counters and a model id, well under 8 KB and no refused key.
+# usage_json <transcript path> → the usage object for run_completed (U35), or nothing; exit 124 when it ran past the
+# deadline. Aligned 2026-10-05 with the template's hook (sovereign-stack-template .claude/hooks/ledger-body.mjs
+# summariseUsage, branch template-harness-ci) so a session counts the same in either repo, with its reviewer's fix:
+#   - the files: the session transcript, then <transcript minus .jsonl>/subagents/*.jsonl — that folder only, regular
+#     .jsonl files only (no .meta.json, no symlink, no subfolder, no recursion), in byte order. No readable session
+#     transcript → nothing (never a subagent-only sum passed off as the session's); an unreadable subagent file is
+#     left out;
+#   - the replies: assistant entries whose message.usage is an object, de-duplicated on message.id (else the entry's
+#     uuid) ACROSS ALL THE FILES in one map, the last occurrence winning — a forked subagent's transcript opens with a
+#     copy of the parent's messages under the same ids, so de-duplicating per file and then summing counted them once
+#     per file; a streamed reply is written several times as it grows, and only the last line has the final count;
+#   - a line that does not parse is skipped (SessionEnd can land while the last line is being written); a counter that
+#     is not a non-negative number counts 0; "<synthetic>" (what Claude Code writes for a message no model produced)
+#     is never a model;
+#   - the shape: the original six keys with the same meaning — input_tokens, output_tokens, cache_creation_input_tokens,
+#     cache_read_input_tokens (the totals), model (the last model the session's own transcript names, else the last a
+#     subagent's names), source "transcript" — plus cache_creation {ephemeral_5m_input_tokens, ephemeral_1h_input_tokens}
+#     when the transcripts record that split (it divides cache_creation_input_tokens, it does not add to it), by_model
+#     {<model>: the same counters} when more than one model did any work (most output first; past ten, nine and
+#     "other"; a reply with no model is "unknown"), and subagents: how many subagent files were counted, when any were.
+#     Nothing when every counter sums to 0: "not measured" and "used nothing" are different facts.
+# Never a prompt, a tool input or a transcript line: counters and model ids only, well under 8 KB and no refused key.
+LEDGER_USAGE_JQ='
+  def count: if type == "number" and . > 0 then . else 0 end;
+  def named: if type == "string" and . != "" and . != "<synthetic>" then . else null end;
+  def C: ["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"];
+  def L: ["ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens"];
+  def fresh: {c: (reduce C[] as $k ({}; .[$k] = 0)), s: null};
+  def acc($u):
+    reduce C[] as $k (.; .c[$k] += ($u[$k] | count))
+    | ($u.cache_creation) as $sp
+    | if ($sp | type) == "object"
+      then .s = (reduce L[] as $k ((.s // (reduce L[] as $k2 ({}; .[$k2] = 0))); .[$k] += ($sp[$k] | count)))
+      else . end;
+  def render: .c + (if .s then {cache_creation: .s} else {} end);
+  [ inputs
+    | select(index("\"usage\""))
+    | input_filename as $f
+    | (fromjson?) as $e
+    | select(($e | type) == "object" and $e.type == "assistant" and ($e.message | type) == "object" and ($e.message.usage | type) == "object")
+    | {f: $f, id: ($e.message.id // $e.uuid // null), u: $e.message.usage, m: ($e.message.model | named)} ] as $all
+  | ($all | to_entries | group_by(.value.id | tojson)
+      | map({first: (map(.key) | min), r: (max_by(.key).value)}) | sort_by(.first) | map(.r)) as $replies
+  | ($replies | reduce .[] as $r (fresh; acc($r.u))) as $total
+  | select(([$total.c[]] | add) > 0)
+  | (([$all[] | select(.f == $own) | .m | select(. != null)] | last)
+     // ([$all[] | select(.f != $own) | .m | select(. != null)] | last)) as $model
+  | ($replies | map(select(([.u[C[]] | count] | add) > 0)) | to_entries | group_by(.value.m | tojson)
+      | map({m: .[0].value.m, first: (map(.key) | min), t: (reduce .[].value.u as $u (fresh; acc($u)))})
+      | sort_by(.first) | sort_by(-.t.c.output_tokens)) as $ranked
+  | ($ranked | if length > 10 then .[0:9] else . end) as $keep
+  | ($ranked[($keep | length):]) as $rest
+  | ($total | render) + {model: $model, source: "transcript"}
+    + (if ($ranked | length) > 1
+       then {by_model: (($keep | map({key: (.m // "unknown"), value: (.t | render)}) | from_entries)
+                        + (if ($rest | length) > 0 then {other: ($rest | reduce .[] as $x (fresh; acc($x.t | render)) | render)} else {} end))}
+       else {} end)
+    + (if $subs > 0 then {subagents: $subs} else {} end)
+'
 usage_json() {
   [ -n "${1:-}" ] && [ -r "$1" ] || return 0
   command -v jq >/dev/null 2>&1 || return 0
-  jq -cn '
-    [inputs | select(type == "object" and .type == "assistant" and (.message.usage | type) == "object")] as $a
-    | ($a | group_by(.message.id // .uuid) | map(last)) as $d
-    | { input_tokens: ([$d[].message.usage.input_tokens // 0] | add // 0),
-        output_tokens: ([$d[].message.usage.output_tokens // 0] | add // 0),
-        cache_creation_input_tokens: ([$d[].message.usage.cache_creation_input_tokens // 0] | add // 0),
-        cache_read_input_tokens: ([$d[].message.usage.cache_read_input_tokens // 0] | add // 0),
-        model: ([$a[].message.model // empty] | last // null),
-        source: "transcript" }
-    | select((.input_tokens + .output_tokens + .cache_creation_input_tokens + .cache_read_input_tokens) > 0)
-  ' "$1" 2>/dev/null || true
+  local dir f tmp pid timer rc subs=0
+  local -a files
+  files=("$1")
+  case "$1" in
+    *.jsonl)
+      dir="${1%.jsonl}/subagents"
+      if [ -d "$dir" ] && [ ! -L "$dir" ]; then
+        while IFS= read -r f; do
+          [ -r "$f" ] || continue
+          files+=("$f"); subs=$((subs + 1))
+        done < <(find "$dir" -mindepth 1 -maxdepth 1 -type f -name '*.jsonl' 2>/dev/null | LC_ALL=C sort)
+      fi
+      ;;
+  esac
+  tmp="$(mktemp "${TMPDIR:-/tmp}/aw-usage.XXXXXX")" || return 0
+  # The sum runs in the background under a deadline: a long transcript must never cost the SessionEnd hook its run_completed.
+  ( exec jq -cnR --arg own "$1" --argjson subs "$subs" "$LEDGER_USAGE_JQ" "${files[@]}" ) <&- >"$tmp" 2>/dev/null &
+  pid=$!
+  # the timer holds none of the hook's pipes, so a hook that has finished never waits on it
+  ( sleep "${LEDGER_USAGE_TIMEOUT:-3}"; : > "$tmp.timeout"; kill -TERM "$pid" 2>/dev/null ) </dev/null >/dev/null 2>&1 &
+  timer=$!
+  { wait "$pid"; } 2>/dev/null; rc=$?   # quiet: a killed sum is reported once, below, not as a job notice
+  kill "$timer" 2>/dev/null; wait "$timer" 2>/dev/null
+  if [ "$rc" -ne 0 ] && [ -f "$tmp.timeout" ]; then rm -f "$tmp" "$tmp.timeout"; return 124; fi
+  [ "$rc" -eq 0 ] && cat "$tmp"
+  rm -f "$tmp" "$tmp.timeout"
+  return 0
 }
-if [ "$EVENT" = "usage" ]; then usage_json "${2:-}"; exit 0; fi
+if [ "$EVENT" = "usage" ]; then usage_json "${2:-}" || echo "usage skipped: timeout (LEDGER_USAGE_TIMEOUT ${LEDGER_USAGE_TIMEOUT:-3} s)" >&2; exit 0; fi
 [ -f "$HERE/.env" ] && set -a && . "$HERE/.env" && set +a
 : "${EVENTS_URL:=https://tellefsen-compass-mcp.christoffer-7e3.workers.dev/events}"
 DRY_RUN="${HOOK_DRY_RUN:-${LEDGER_DRY_RUN:-}}"
@@ -133,11 +205,14 @@ close_run() {  # $1 = run_id, $2 = gates file, $3 = note for the rejected closes
   post "$(base "$1" run_completed "$4" "$(eid "$1" "" run_completed)")"
   rm -f "$2"
 }
-# with_usage <payload json> <transcript path> → the payload plus {usage} when the transcript sums to something (U35).
+# with_usage <payload json> <transcript path> → the payload plus {usage} when the transcript sums to something (U35);
+# plus {usage_skipped: "timeout"} instead when the sum ran past its deadline — the run still ends, without a count.
 with_usage() {
-  local u
-  u="$(usage_json "${2:-}")"
-  if [ -n "$u" ]; then jq -cn --argjson p "$1" --argjson u "$u" '$p + {usage: $u}'; else printf '%s' "$1"; fi
+  local u rc
+  u="$(usage_json "${2:-}")"; rc=$?
+  if [ "$rc" -eq 124 ]; then jq -cn --argjson p "$1" '$p + {usage_skipped: "timeout"}'
+  elif [ -n "$u" ]; then jq -cn --argjson p "$1" --argjson u "$u" '$p + {usage: $u}'
+  else printf '%s' "$1"; fi
 }
 # transcript_for <session id> → the path Claude Code writes the session's transcript to: <projects>/<slug of cwd>/<id>.jsonl,
 # the slug being the cwd with every character outside [A-Za-z0-9] as "-" (the state file carries the cwd; else this repo).
