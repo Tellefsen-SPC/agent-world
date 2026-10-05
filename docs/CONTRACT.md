@@ -50,9 +50,16 @@ rule above).
 - **Who sees it: the Owner only (decided 2026-10-06, to ratify).** A `?` goes only to someone who can resolve it (D2).
   The layer's approver role defaults to Owner, and `gate_waiting` does not say which role a proposal needs, so an
   operator would hold `?`s the console refuses them. Revisit once `gate_waiting` carries the approver role. Operator,
-  client, prime and viewer never tap it. A viewer who cannot tap an approval gate gets no trace of it beyond a blank
-  entry in `gates[]`, which keeps the run off `running`: no name, link, label, surface or title, on a mixed run too
-  (a run with its own `client_gate` shows the client that gate alone).
+  client, prime and viewer never tap it. A viewer who cannot tap an approval gate gets no trace of it on the threads:
+  not its name, link, label, surface or title, and not that it exists, how many or since when. It is not in `gates[]`,
+  and `gateAt` and the "n of m left" counts leave it out. On a mixed run, a run with its own `client_gate` shows the
+  client that gate alone. The run is still not counted as running: the thread's `running` is worked out from every
+  pending gate, whoever is looking, and `still.mjs` `isLive` and the `live` set in `compass.mjs` read `running`, not
+  `gates[]` (confirmation, 2026-10-06).
+- **One place still counts it: the records office.** Its list of the last twenty runs (`rooms.mjs` `recordsOffice`)
+  gives each run's gate count and state from the ledger, for any viewer, so a proposal adds one there. That is left as
+  it is. `/rooms` is on M3's list of routes a client grant gets nothing from (`docs/multiplayer.md`, "Checks for M3");
+  today there is one viewer per process, and the sidecar does not yet refuse `/rooms` by viewer.
 
 Re-capture the three live responses after a Worker deploy with `scripts/capture-contract.sh` (`--substrate-only`, `--spend-only` for one of them) (bearer from `.env`; actors scrubbed, notes trimmed) and re-run `npm test`.
 

@@ -52,8 +52,12 @@ export function failedRecently(run, runs, now, windowMs = DAY_MS) {
   for (const r of runs.values()) if (r.skill === run.skill && r.terminal === 'run_completed' && r.lastAt > run.lastAt) return false
   return true
 }
-/** Live: started, no terminal event, activity within the TTL, no pending gate (ES-6.2). */
-export const isLive = (run, thread, now, ttlMs) => Boolean(run.started) && run.terminal == null && now - run.lastAt < ttlMs && !(thread?.gates || []).length
+/**
+ * Live: started, and the adapter's own `running` — no terminal event, activity within the TTL, no pending gate (ES-6.2).
+ * `running` is worked out from every pending gate, whoever is looking; `gates` holds only the ones this viewer may see,
+ * so it cannot say whether a run waits on a person (confirmation 1, 2026-10-06). `now` and `ttlMs` are kept for callers.
+ */
+export const isLive = (run, thread, now, ttlMs) => Boolean(run.started) && Boolean(thread?.running)
 
 /** What kind of thread this is — the test fails on a null. */
 export function kindOf(t) {

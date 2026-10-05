@@ -266,7 +266,7 @@ test("approval: a run with the client's own gate and a proposal shows the client
       const rows = intrayRows(still.threads)
       assert.deepEqual(rows.map((r) => [r.gate, r.what, r.url]), [['ZZTEST acceptance', "client's to tap", ACCEPT]], `${preset}, ${order}: the tray row is their gate`)
       assert.deepEqual(leaks(rows), [])
-      assert.equal(thread.gates.length, 2, 'the proposal is still a gate the run waits on…')
+      assert.equal(thread.gates.length, 1, 'gates[] holds only the gate they may see (confirmation 1)')
       assert.equal(thread.running, false, '…so the run is blocked, not running')
     }
     for (const preset of ['operator', 'viewer']) {
@@ -322,4 +322,47 @@ test("approval: the panel's \"What it wants from you\" names the first gate the 
   assert.match(main, /import\s*\{[^}]*\bpanelAsk\b[^}]*\}\s*from\s*'\.\/intray\.mjs'/, 'main.js imports panelAsk from ./intray.mjs')
   assert.match(main, /const \{ gate, instruction \} = panelAsk\(thread\)/, 'the panel takes its gate and instruction from it')
   assert.ok(!/gates\?\.\[0\]\?\.gate/.test(main), 'and no longer reads gates[0] for the gate')
+})
+
+test('approval (confirmation 1): under client, a hidden proposal leaves no trace — not how many, not since when — and a blocked run is still never counted running', async () => {
+  const { buildStill, isLive } = await import(path.join(root, 'server/harnesses/compass/still.mjs'))
+  const { loadPack } = await import(path.join(root, 'server/harnesses/compass/pack.mjs'))
+  const pack = loadPack('tellefsen-campus')
+  const place = (c) => ({ zone: c || 'ZZTEST HQ', planet: 'zz', pack: pack.id, town: Boolean(c) })
+  const viewer = makeViewer({ preset: 'client' })
+  const SECOND = '1e2d3c4b-5a69-4788-9766-554433221100'
+  const CLIENT_AT = '2026-10-06T07:30:00Z'
+  // two proposals around the client's own gate: on 6af6ebf the tray read "(3 left)" and gateAt was the first proposal's
+  const mixed = fold([
+    ev('e1', 'run_started'),
+    ev('e2', 'gate_waiting', { surface: 'approval', gate: `approval:${PROPOSAL}` }, { at: '2026-10-06T07:00:00Z' }),
+    ev('e3', 'gate_waiting', { surface: 'client_gate', gate: 'ZZTEST acceptance', ref_url: 'https://app.notion.com/p/zztest-acceptance' }, { at: CLIENT_AT }),
+    ev('e4', 'gate_waiting', { surface: 'approval', gate: `approval:${SECOND}` }, { at: '2026-10-06T07:45:00Z' }),
+  ])
+  const t = await toThread(mixed.get(RUN), null, viewer, surfaces, NOW, { place, consoleProposalsUrl: `${WORKER}/console/proposals` })
+  assert.deepEqual(t.gates.map((g) => g.surface), ['client_gate'], 'gates[] holds the client gate alone')
+  assert.ok(!t.gates.some((g) => g.surface === ''), 'no entry with an empty surface marks a hidden gate')
+  assert.equal(t.gateAt, Date.parse(CLIENT_AT), "gateAt is the client gate's own time, not a proposal's")
+  assert.ok(!/\(\d+ of \d+ left\)/.test(t.title + t.preview), 'no count that includes the proposals')
+  const [row] = intrayRows([t])
+  assert.equal(row.left, 1, 'the tray row reads no "(n left)"')
+  assert.equal(row.at, Date.parse(CLIENT_AT))
+  assert.ok(!JSON.stringify(t).includes('"surface":""'))
+  // still not running: the server's own `running` sees every pending gate, for every viewer
+  assert.equal(t.running, false)
+  assert.equal(isLive(mixed.get(RUN), t, NOW, 2 * 3600e3), false)
+  // a run waiting only on a hidden proposal has no gate the client sees, and is still not counted running
+  const onlyHidden = fold([ev('e1', 'run_started'), ev('e2', 'gate_waiting', { surface: 'approval', gate: `approval:${PROPOSAL}` })])
+  const h = await toThread(onlyHidden.get(RUN), null, viewer, surfaces, NOW, { place, consoleProposalsUrl: `${WORKER}/console/proposals` })
+  assert.deepEqual(h.gates, [])
+  assert.equal(h.gateAt, 0)
+  assert.equal(isLive(onlyHidden.get(RUN), h, NOW, 2 * 3600e3), false, 'blocked on a person, so not live')
+  const still = buildStill({ now: NOW, runs: onlyHidden, threadOf: new Map([[RUN, h]]), pack, place, viewer })
+  assert.equal(still.counts.running, 0, 'the strip does not count it as running')
+  assert.ok(!still.threads.some((x) => x.id === RUN))
+  // and a run that is live, with no gate at all, still counts as running under client
+  const live = fold([ev('e1', 'run_started', {}, { at: '2026-10-06T07:50:00Z' })])
+  const l = await toThread(live.get(RUN), null, viewer, surfaces, NOW, { place })
+  assert.equal(isLive(live.get(RUN), l, NOW, 2 * 3600e3), true)
+  assert.equal(buildStill({ now: NOW, runs: live, threadOf: new Map([[RUN, l]]), pack, place, viewer }).counts.running, 1)
 })
