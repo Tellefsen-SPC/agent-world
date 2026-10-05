@@ -168,7 +168,7 @@ Cleanup: none.
 *Re-written 2026-10-05 by the developer under delegated authority, to ratify, against the Worker's branch `compass-ask` (`docs/ask.md` there), which wins where the old text differs. The answer names Alpha's gate by its name and its Pending Approval link, from the events. This cut does not read Airtable, so the row's instruction text is not in the answer (ADR-0009 in the Compass repo). The route is switched on by `ASK_PROVIDER`, `ASK_MODEL` and that provider's key, not `ANTHROPIC_API_KEY` alone. Steps 7–8 check this repo's half (U16W wiring): the side port adds the bearer, so the browser never holds one (ADR-0008). `feature_list.json` keeps U16W at `passes: false` until steps 4–6 run against the deployed route with a key; until `/ask` is deployed, only step 1 can run.*
 
 - **Setup:**
-  - `compass-ask` is merged and the Worker deployed from main, with `ASK_PROVIDER`, `ASK_MODEL` and the key set (the Compass repo's RUNBOOK §6), and the `ops_skills` row `agent-world-pa` active.
+  - `compass-ask` is merged and the Worker deployed from main, with `ASK_PROVIDER`, `ASK_MODEL` and the key set (the Compass repo's RUNBOOK §9; §6 before 71fecb9), and the `ops_skills` row `agent-world-pa` active.
   - In this repo's folder, load `.env` (it prints nothing): `set -a; . ./.env; set +a`
   - Then: `W="${EVENTS_URL%/events}"`
   - And the token `/ask` takes: `ASK_TOKEN="${WORLD_ASK_BEARER:-$EVENTS_BEARER_TOKEN}"`. Once the Worker has its own `ASK_BEARER` (recommended), only that value opens `/ask`, and `WORLD_ASK_BEARER` in `.env` must hold it; the events bearer then gets 401 there. `/ledger/scan` (step 6) always takes the events bearer.
