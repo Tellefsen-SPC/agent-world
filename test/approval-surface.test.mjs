@@ -61,6 +61,12 @@ test('approval: config.mjs derives the console from EVENTS_URL — https only, t
   assert.equal(at(`${WORKER}/zztest-compass/events`), `${WORKER}/zztest-compass/console/proposals`, 'a Worker under a path keeps it')
   for (const bad of ['http://zztest-worker.example/events', 'https://zztest-worker.example/ledger', 'https://zztest:secret@zztest-worker.example/events', 'https://zztest-worker.example/events?x=1', 'https://zztest-worker.example/events#x', 'javascript:alert(1)//events', '', 'not a url'])
     assert.equal(at(bad), '', `no console for ${JSON.stringify(bad)}`)
+  // a user alone and a password alone, each on its own (review nit 8): either would ride into the browser in the link
+  for (const bad of ['https://zztest@zztest-worker.example/events', 'https://:zztest-secret@zztest-worker.example/events']) {
+    const u = new URL(bad)
+    assert.ok(Boolean(u.username) !== Boolean(u.password), `${bad} carries exactly one of the two`)
+    assert.equal(at(bad), '', `no console for ${JSON.stringify(bad)}`)
+  }
 })
 
 test('approval: an approval:<uuid> gate opens the Compass console at <worker base>/console/proposals/<proposal id>', async () => {
