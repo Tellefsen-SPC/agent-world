@@ -148,6 +148,25 @@ export async function loadSpendToday(includeTest = false) {
     return null
   }
 }
+/**
+ * U16 — the PA panel's one network call: the question to the sidecar's POST /ask, never to the Worker. The sidecar
+ * adds the bearer (docs/adr/0008); nothing on this side holds one. Returns { status, body } for overlay/pa.mjs viewOf —
+ * status 0 when the sidecar did not answer. Waits longer than the sidecar's own 40 s, so its 504 arrives first.
+ */
+export async function askPa(body) {
+  try {
+    const res = await fetch(`${SIDECAR}/ask`, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(60_000) })
+    let json = null
+    try {
+      json = await res.json()
+    } catch {
+      json = null
+    }
+    return { status: res.status, body: json && typeof json === 'object' ? json : {} }
+  } catch (err) {
+    return { status: 0, body: { error: String(err?.message || err) } }
+  }
+}
 /** The rooms the sidecar declares (the pack's, with ring and spoke) — the plots the room panels hang off. */
 export const rooms = () => world?.rooms || []
 
