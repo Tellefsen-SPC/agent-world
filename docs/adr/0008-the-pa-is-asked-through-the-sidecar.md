@@ -53,10 +53,19 @@ holds names and numbers only (`overlay/zones.mjs`: "No token ever reaches this f
   - non-person actors are ignored (decided 2026-10-05, confirmation review). That means the fixed system actors
     (`world`, `cowork`, `worker`, `cron`, `coordinator`, `n8n`, `zapier`, `claude`, `hook`, `session_hook`, `system`,
     `actor` — the live capture's scrubbed placeholder — and the rest of `SYSTEM_ACTORS` in `compass/ask.mjs`),
-    anything starting `zztest`, and any value equal to a name the world already knows: a skill or one of its steps, a
-    trigger value, a client or town, a company or its key, a room, the campus. So "The Cowork job…", "Agent World
-    shows…" and "ZZTEST Town has 2 open gates" pass. Before this, the last two, "Actor fields…" and "the
-    Coordinator…" were withheld.
+    anything starting `zztest`, and any value equal to a name the world already knows. So "The Cowork job…",
+    "Agent World shows…" and "ZZTEST Town has 2 open gates" pass. Before this, the last two, "Actor fields…" and
+    "the Coordinator…" were withheld.
+  - the names the world already knows come **from the substrate only** (decided 2026-10-05, review of ed7aba9;
+    `substrateNames` in `compass/ask.mjs`): Active `ops_clients` (towns are these), `ops_skills` and their steps,
+    `WORLD_COMPANIES` names and keys (planets are these), the pack's rooms (names and ids), the campus, plus the
+    Worker's fixed list of trigger values. Never from ledger events or rows. Anyone holding the events bearer can
+    write an event, and an honest one can carry a person's name in `client`: an event with `client: "Christoffer"`
+    let "Alpha waits on Christoffer's approval." through, until this. The Worker draws the same line (its
+    `docs/ask.md`: known names never come from events or ledger rows).
+  - so a name only events vouch for is not known. An inactive client seen only in events, used as an actor, is
+    withheld when an answer names it. That is the safe direction: an answer about such a place is lost, never one
+    about a person shown. If the substrate cannot be read, fewer names are known and more answers are withheld.
 - The names stay on the server, in memory with the scan. The page holds no actor and nothing logs one.
 - **It withholds answers that name Christoffer, and that is intended.** His handle is an actor in the ledger (the
   taps he makes), so "Alpha waits on Christoffer's approval." is withheld, and the panel shows "Withheld: it named a

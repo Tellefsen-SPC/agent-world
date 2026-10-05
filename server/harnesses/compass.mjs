@@ -21,7 +21,7 @@ import { makeViewer } from './compass/viewer.mjs'
 import { createSurfaces } from './compass/surfaces.mjs'
 import { createSubstrate } from './compass/substrate.mjs'
 import { createSpend } from './compass/spend.mjs'
-import { createAsk, personNames } from './compass/ask.mjs'
+import { createAsk, personNames, substrateNames, TRIGGERS } from './compass/ask.mjs'
 import { deriveWorld, worldDescriptor } from './compass/zones.mjs'
 import { createOverlayApi, startOverlayApi } from './compass/overlay-api.mjs'
 import { createSteering } from './compass/steering.mjs'
@@ -45,15 +45,9 @@ const spend = createSpend(cfg, { log }) // U35: GET /world/spend, 60-s cache per
  */
 const ask = createAsk(cfg, {
   log,
-  // system actors and every name the world already knows are skipped (personNames): only the rest may be people
-  knownNames: () =>
-    personNames(lastScan?.actors || [], {
-      skills: lastScan?.known?.skills || [],
-      triggers: lastScan?.known?.triggers || [],
-      clients: lastScan?.known?.clients || [],
-      places: [...(world?.towns || []).map((t) => t.name), CAMPUS, ...(world?.planets || []).flatMap((p) => [p.name, p.key])],
-      terms: lastScan?.known?.terms || [],
-    }),
+  // system actors, the Worker's fixed triggers and the names the substrate knows are skipped (personNames, substrateNames):
+  // only the rest may be people. Nothing here comes from ledger events.
+  knownNames: () => personNames(lastScan?.actors || [], { ...(lastScan?.known || {}), triggers: TRIGGERS }),
 })
 const steering = createSteering(cfg, { surfaces, substrate, log }) // U19: three panels, 5-min caches, served by the sidecar
 /** What the last scan saw — the room panels (U31) and the archive (U32) read it, never the ledger again. */
@@ -279,17 +273,10 @@ async function scan(now = Date.now()) {
   }
   for (const a of campusAlert(runs, now)) failed.add(a.skill) // a run_failed in 24 h with no later completion of the skill (U17's rule)
   // U16 backstop: every actor value in the window — run starts, taps, everything — for the PA's named-person check only,
-  // and the names the world already knows, which are never people: skills, triggers and clients from the events, and the
-  // substrate's own terms (its skills, clients, companies and their keys, the pack's rooms)
-  const strings = (list) => [...new Set(list.map((v) => (typeof v === 'string' ? v.trim() : '')).filter(Boolean))]
-  const actors = strings(events.map((e) => e?.actor))
-  const companies = substrateNow.world_companies?.companies || []
-  const known = {
-    skills: strings([...events.map((e) => e?.skill), ...(substrateNow.skills || []).map((k) => k?.name)]),
-    triggers: strings(events.map((e) => e?.trigger)),
-    clients: strings([...events.map((e) => e?.client), ...(substrateNow.clients || []).map((c) => c?.name)]),
-    terms: strings([...companies.flatMap((c) => [c?.name, c?.key]), ...(homePack().rooms || []).flatMap((r) => [r?.name, r?.id])]),
-  }
+  // and the names the world already knows, which are never people — from the substrate only (substrateNames): an event
+  // can be written by anyone holding the events bearer, so nothing an event says makes a name "known"
+  const actors = [...new Set(events.map((e) => (typeof e?.actor === 'string' ? e.actor.trim() : '')).filter(Boolean))]
+  const known = substrateNames(substrateNow, { rooms: homePack().rooms || [], campus: CAMPUS })
   lastScan = { at: now, runs, rowById, threads, projects, silent: stale.map((s) => s.name), live, failed, actors, known }
 
   // Signals served with GET /world: the strip's counts (U28), the campus alert list (the ! requests stand in the

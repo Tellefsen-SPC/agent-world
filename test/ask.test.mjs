@@ -473,3 +473,18 @@ test('U16W (confirmation review 4): the bearer is cut out BEFORE any string is c
   const code = normaliseError(400, { error: `${'e'.repeat(76)}${T}` }, null, { secrets })
   assert.ok(!code.error.includes(T.slice(0, 4)), 'nor the error code')
 })
+
+test('U16 (review of ed7aba9, 1): substrateNames reads the substrate only — Active clients, skills, companies and their keys, rooms, the campus; the fixed triggers; nothing else', async () => {
+  const { substrateNames, TRIGGERS } = await import(path.join(root, 'server/harnesses/compass/ask.mjs'))
+  assert.deepEqual(TRIGGERS, ['chat', 'claude_project', 'cowork_scheduled', 'cowork_manual', 'claude_code', 'session_hook'], 'the Worker\'s list (events-endpoint.ts TRIGGERS)')
+  const sub = {
+    clients: [{ name: 'Fixture Freight', status: 'Active' }, { name: ' Fixture Two ', status: 'active' }, { name: 'Fixture Former', status: 'Former' }, { name: 'Fixture Nostatus' }, { status: 'Active' }],
+    skills: [{ name: 'zztest-approver' }, { name: '' }],
+    world_companies: { companies: [{ key: 'fixture-harbour', name: 'Fixture Harbour Co' }, { key: 'zz-home' }] },
+    events: [{ client: 'Christoffer' }], // not a substrate key: never read
+  }
+  const got = substrateNames(sub, { rooms: [{ id: 'research-lab', name: 'research lab' }], campus: 'ZZTEST HQ' })
+  assert.deepEqual(got, { skills: ['zztest-approver'], clients: ['Fixture Freight', 'Fixture Two'], terms: ['Fixture Harbour Co', 'fixture-harbour', 'zz-home', 'research lab', 'research-lab', 'ZZTEST HQ'] })
+  assert.ok(!JSON.stringify(got).includes('Christoffer') && !JSON.stringify(got).includes('Former'))
+  assert.deepEqual(substrateNames(null), { skills: [], clients: [], terms: [] }, 'no substrate: nothing known, so more is withheld')
+})

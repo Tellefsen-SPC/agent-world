@@ -79,6 +79,7 @@ at a time. The sidecar's own answers, beside the Worker's: 403 (not Owner, or an
 status, the error code and the PA's own run id — never the question, the answer or the detail. Through the sidecar,
 `{}` is the sidecar's own 400 and never reaches the Worker: the liveness probe is a curl to the Worker
 (`VERIFICATION.md` V-U16W). The backstop (ADR-0008): a 200 answer whose text or refs name someone the last ledger scan
-names as an actor (exact word or phrase; system actors, anything `zztest…`, and names the world knows — skills,
-triggers, clients, towns, companies, rooms — are never people) is passed on as `{answer: "Withheld: it named a person.", based_on: [],
+names as an actor (exact word or phrase; system actors, anything `zztest…`, the Worker's trigger values, and the names
+the substrate knows — Active clients, skills, companies and their keys, rooms, the campus; never names from events — are
+never people) is passed on as `{answer: "Withheld: it named a person.", based_on: [],
 refused: true, reason: "named_person", withheld: true, …}` with the run, model and counts kept.

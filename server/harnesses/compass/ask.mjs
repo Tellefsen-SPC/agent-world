@@ -237,6 +237,29 @@ export const SYSTEM_ACTORS = Object.freeze([
   'claude_code', 'claude-code', 'cowork_scheduled', 'cowork_manual', 'sweep', 'poller', 'hooks', 'scheduler', 'make', 'github', 'ci', 'bot', 'agent', 'unknown', 'none', 'null',
 ])
 const LETTER = /\p{L}/u
+
+/** The trigger values the Worker accepts on an event (tellefsen-compass-mcp src/lib/events-endpoint.ts TRIGGERS) — fixed, never read from events. */
+export const TRIGGERS = Object.freeze(['chat', 'claude_project', 'cowork_scheduled', 'cowork_manual', 'claude_code', 'session_hook'])
+
+/**
+ * The names the world already knows, from the substrate ONLY (review of ed7aba9, 2026-10-05): Active ops_clients,
+ * ops_skills, WORLD_COMPANIES names and keys, the pack's rooms (names and ids), and the campus. Never from ledger
+ * events or rows — anyone holding the events bearer can write one, and an honest event can carry a person's name in
+ * `client`; the Worker draws the same line (its docs/ask.md: known names never come from events or ledger rows).
+ * Towns and planets need no entry of their own: a town is an Active client, a planet a company. A name only events
+ * vouch for — an inactive client, say — is not known, so an answer naming it is withheld: the safe side.
+ */
+export function substrateNames(substrate, { rooms = [], campus = '' } = {}) {
+  const s = substrate && typeof substrate === 'object' ? substrate : {}
+  const list = (v) => (Array.isArray(v) ? v : [])
+  const text = (v) => (typeof v === 'string' && v.trim() ? [v.trim()] : [])
+  const clients = list(s.clients).filter((c) => /^active$/i.test(String(c?.status || '').trim())).flatMap((c) => text(c?.name))
+  const skills = list(s.skills).flatMap((k) => text(k?.name))
+  const companies = list(s.world_companies?.companies).flatMap((c) => [...text(c?.name), ...text(c?.key)])
+  const roomNames = list(rooms).flatMap((r) => [...text(r?.name), ...text(r?.id)])
+  return { skills, clients, terms: [...companies, ...roomNames, ...text(campus)] }
+}
+
 /**
  * The actor values that may be people. Skipped: a system actor (SYSTEM_ACTORS, or a value starting "zztest"); a value
  * equal to a name the world already knows — a skill or one of its steps (`skill:step`, the approval layer's
