@@ -1,0 +1,248 @@
+{
+  "_source": "Synthetic: written from tellefsen-compass-mcp branch compass-ask (6951ced, then 71fecb9 for english_only and out_of_time: docs/ask.md and src/lib/ask-endpoint.ts, ask-guard.ts), which is not merged or deployed, so nothing could be captured. ZZTEST places and made-up ids only. Re-capture through the sidecar once /ask is live (VERIFICATION.md V-U16W).",
+  "answer": {
+    "status": 200,
+    "body": {
+      "answer": "ZZTEST Alpha waits on the Pending Approval gate ZZTEST gate (https://airtable.com/appZZTEST/tblZZTEST/recZZTEST).\n\nBased on: run a1a1a1a1 (2 events) · no ledger row for it · ZZTEST Client's runs in the last 14 days (1 ended) · their open runs and gates (1 open run, 1 open gate) · WORLD_COMPANIES v3, AUTO_RUN_POLICY v2, MODEL_PRICING v0.2.",
+      "based_on": [
+        {
+          "ref": "ops_config:WORLD_COMPANIES",
+          "label": "WORLD_COMPANIES v3",
+          "read": true,
+          "version": "3"
+        },
+        {
+          "ref": "ops_run_events:run_id=a1a1a1a1-0000-4000-8000-000000000001",
+          "label": "run a1a1a1a1 (2 events)",
+          "read": true,
+          "rows": 2
+        },
+        {
+          "ref": "ops_skill_runs:id=a1a1a1a1-0000-4000-8000-000000000001",
+          "label": "no ledger row for it",
+          "read": true,
+          "rows": 0
+        },
+        {
+          "ref": "ops_run_events:place=ZZTEST Client;since=2026-09-21",
+          "label": "their open runs and gates (1 open run, 1 open gate)",
+          "read": true,
+          "rows": 3
+        },
+        {
+          "ref": "notion:milestone=ZZTEST milestone",
+          "label": "milestone ZZTEST milestone (named, not read)",
+          "read": false,
+          "note": "a name, not a Notion page id or link"
+        }
+      ],
+      "run_id": "b2b2b2b2-0000-4000-8000-000000000002",
+      "model": "claude-sonnet-5",
+      "provider": "anthropic",
+      "usage": {
+        "input_tokens": 1200,
+        "output_tokens": 150,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 800
+      },
+      "tokens_in": 2000,
+      "tokens_out": 150,
+      "truncated": false,
+      "ledger": {
+        "run_started": true,
+        "run_completed": true,
+        "row": "inserted"
+      }
+    }
+  },
+  "refusal_guard": {
+    "status": 200,
+    "body": {
+      "answer": "I can't answer that. Under the firm's Annex III rule this assistant never ranks, scores, evaluates or compares people, named or not, and never says who should be given work. I can tell you about runs, clients, towns, milestones, gates and cost, by place: for example what a town's runs are waiting on, which gates are open, or what a client's runs cost this week.",
+      "refused": true,
+      "reason": "annex_iii",
+      "based_on": [],
+      "run_id": "c3c3c3c3-0000-4000-8000-000000000003",
+      "model": null,
+      "provider": null,
+      "usage": null,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "truncated": false,
+      "ledger": {
+        "run_started": true,
+        "run_completed": true,
+        "row": "inserted"
+      }
+    }
+  },
+  "refusal_withheld": {
+    "status": 200,
+    "body": {
+      "answer": "I can't answer that. Under the firm's Annex III rule this assistant never ranks, scores, evaluates or compares people, named or not, and never says who should be given work. I can tell you about runs, clients, towns, milestones, gates and cost, by place: for example what a town's runs are waiting on, which gates are open, or what a client's runs cost this week.",
+      "refused": true,
+      "reason": "annex_iii",
+      "withheld": true,
+      "based_on": [
+        {
+          "ref": "ops_config:WORLD_COMPANIES",
+          "label": "WORLD_COMPANIES v3",
+          "read": true,
+          "version": "3"
+        }
+      ],
+      "run_id": "d4d4d4d4-0000-4000-8000-000000000004",
+      "model": "claude-sonnet-5",
+      "provider": "anthropic",
+      "usage": {
+        "input_tokens": 900,
+        "output_tokens": 60
+      },
+      "tokens_in": 900,
+      "tokens_out": 60,
+      "truncated": false,
+      "ledger": {
+        "run_started": true,
+        "run_completed": false,
+        "row": null
+      }
+    }
+  },
+  "budget": {
+    "status": 429,
+    "retry_after": "15120",
+    "body": {
+      "error": "ask_budget_exceeded",
+      "detail": "The PA has used 200 model calls today (UTC), its limit of 200 (ASK_DAILY_LIMIT). It resets at 00:00 UTC (04:00 in Muscat). Nothing was spent and nothing was recorded. To raise the limit, set it in wrangler.jsonc vars (RUNBOOK §6).",
+      "asks_today": 200,
+      "tokens_today": 412000,
+      "limit": 200,
+      "token_limit": 2000000
+    }
+  },
+  "not_configured": {
+    "status": 503,
+    "body": {
+      "error": "ask_not_configured",
+      "detail": "ASK_PROVIDER is not set on the Worker"
+    }
+  },
+  "provider_failed": {
+    "status": 502,
+    "body": {
+      "error": "provider_failed",
+      "detail": "anthropic answered HTTP 529 (overloaded_error). Try again in a minute.",
+      "run_id": "e5e5e5e5-0000-4000-8000-000000000005",
+      "provider": "anthropic",
+      "model": "claude-sonnet-5",
+      "ledger": {
+        "run_started": true,
+        "run_failed": true,
+        "row": "inserted"
+      }
+    }
+  },
+  "provider_timeout": {
+    "status": 502,
+    "body": {
+      "error": "provider_timeout",
+      "detail": "anthropic did not answer within 25 s.",
+      "run_id": "f6f6f6f6-0000-4000-8000-000000000006",
+      "provider": "anthropic",
+      "model": "claude-sonnet-5",
+      "ledger": {
+        "run_started": true,
+        "run_failed": true,
+        "row": "inserted"
+      }
+    }
+  },
+  "substrate_unavailable": {
+    "status": 502,
+    "body": {
+      "error": "substrate_unavailable",
+      "detail": "The Worker could not read the substrate (ops_run_events, no answer in time), so there is nothing to answer from and the model was not called. The ask is recorded as run_failed.",
+      "run_id": "a7a7a7a7-0000-4000-8000-000000000007"
+    }
+  },
+  "ledger_unavailable": {
+    "status": 502,
+    "body": {
+      "error": "ledger_unavailable",
+      "detail": "The run ledger did not record this ask's run_started (no answer in time), so the model was not called: every ask is a governed run (ES-4.6)."
+    }
+  },
+  "bad_body": {
+    "status": 400,
+    "body": {
+      "error": "question is required: send {\"question\": \"…\", \"context\": {…}}"
+    }
+  },
+  "unauthorized": {
+    "status": 401,
+    "body": {
+      "error": "unauthorized"
+    }
+  },
+  "english_only_question": {
+    "status": 200,
+    "body": {
+      "answer": "I can only take questions in English for now: the checks that keep this assistant from judging people read English only. Please ask again in English, with plain Latin letters.",
+      "refused": true,
+      "reason": "english_only",
+      "based_on": [],
+      "run_id": "b8b8b8b8-0000-4000-8000-000000000008",
+      "model": null,
+      "provider": null,
+      "usage": null,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "truncated": false,
+      "ledger": {
+        "run_started": true,
+        "run_completed": true,
+        "row": "inserted"
+      }
+    }
+  },
+  "english_only_answer": {
+    "status": 200,
+    "body": {
+      "answer": "The answer was withheld: answers are checked in English only, and this one was not plain English. Ask again; the PA answers in English.",
+      "refused": true,
+      "reason": "english_only",
+      "withheld": true,
+      "based_on": [
+        {
+          "ref": "ops_config:WORLD_COMPANIES",
+          "label": "WORLD_COMPANIES v3",
+          "read": true,
+          "version": "3"
+        }
+      ],
+      "run_id": "c9c9c9c9-0000-4000-8000-000000000009",
+      "model": "claude-sonnet-5",
+      "provider": "anthropic",
+      "usage": {
+        "input_tokens": 900,
+        "output_tokens": 60
+      },
+      "tokens_in": 900,
+      "tokens_out": 60,
+      "truncated": false,
+      "ledger": {
+        "run_started": true,
+        "run_completed": true,
+        "row": "inserted"
+      }
+    }
+  },
+  "out_of_time": {
+    "status": 502,
+    "body": {
+      "error": "out_of_time",
+      "detail": "Reading the substrate took so long that there was no time left to ask the model and still record the ask. Nothing was spent; the ask is recorded as run_failed. Try again.",
+      "run_id": "dadadada-0000-4000-8000-00000000000a"
+    }
+  }
+}

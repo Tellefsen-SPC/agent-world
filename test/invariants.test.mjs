@@ -1,7 +1,10 @@
 // Agent World — invariants that hold for every unit, every session. `npm test` runs this file.
 // 1. src/ is byte-identical to upstream (the fork's seam is one adapter file).
-// 2. The world burns zero tokens: no model endpoint or SDK anywhere outside node_modules.
-// 3. The adapter never writes to the substrate (static guard; the human checks prove it live).
+// 2. The fork calls no model: no model endpoint or SDK anywhere outside node_modules. (The PA spends tokens on the
+//    Worker, which makes the one model call; the fork only forwards the question — ADR-0008.)
+// 3. The adapter never writes to the substrate (static guard; the human checks prove it live). Two non-GETs are
+//    allowed, each pinned to one line in one file: Notion's data-source query (a read with a body) and the PA's
+//    question to the Worker's POST /ask (U16; the Worker, not the world, records the ask as its own run).
 // 4. The registry is exactly [compass].
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -41,7 +44,7 @@ const walk = (dir, out = []) => {
   return out
 }
 
-test('no model API anywhere in the fork (zero tokens)', () => {
+test('no model API anywhere in the fork (the fork calls no model; the PA\'s tokens are spent on the Worker)', () => {
   const needles = [/api\.anthropic\.com/, /api\.openai\.com/, /generativelanguage\.googleapis/, /@anthropic-ai\/sdk/, /["']openai["']/, /messages\.create\(/]
   const hits = []
   for (const f of walk(root)) {
@@ -74,6 +77,18 @@ test('the adapter never writes: no non-GET request and no supabase-js write chai
     if (allowed.length !== 1 || assignments.length !== 1 || !guarded || !/data_sources\/\$\{id\}\/query/.test(text)) return null
     return lines.filter((l) => !l.includes(ALLOWED_LINE)).join('\n') // the rest is checked like every other file
   }
+  // The second allowed non-GET (U16W wiring, ES-4.6; docs/adr/0008): the PA's question, POST to the Worker's /ask.
+  // It writes nothing the world owns: the Worker records the ask as its own governed run (its events and its
+  // ops_skill_runs row), as it records every model call it makes. compass/ask.mjs may hold exactly one method,
+  // POST, on exactly one fetch — to cfg.askUrl, verbatim — and no other file may.
+  const ASK_LINE = "method: 'POST',"
+  const askOnly = (text) => {
+    const lines = text.split('\n')
+    const methods = lines.filter((l) => /\.method\s*=/.test(l) || /method:\s*['"]/.test(l))
+    const fetches = [...text.matchAll(/fetchImpl\s*\(\s*([^,)]+)/g)].map((m) => m[1].trim())
+    if (methods.length !== 1 || methods[0].trim() !== ASK_LINE || fetches.length !== 1 || fetches[0] !== 'cfg.askUrl') return null
+    return lines.filter((l) => l.trim() !== ASK_LINE).join('\n')
+  }
   const chainNeedle = /\.from\([^)]*\)[\s\S]{0,200}?\.(insert|update|upsert|delete|rpc)\(/
   const hits = []
   for (const f of files) {
@@ -81,6 +96,11 @@ test('the adapter never writes: no non-GET request and no supabase-js write chai
     if (path.basename(f) === 'notion.mjs') {
       const rest = notionQueryOnly(text)
       if (rest == null) hits.push('server/harnesses/compass/notion.mjs: more than the one guarded Notion data-source query is written')
+      else text = rest
+    }
+    if (path.basename(f) === 'ask.mjs') {
+      const rest = askOnly(text)
+      if (rest == null) hits.push('server/harnesses/compass/ask.mjs: more than the one POST of the question to cfg.askUrl')
       else text = rest
     }
     for (const n of httpNeedles) if (n.test(text)) hits.push(`${path.relative(root, f)} matches ${n}`)
@@ -131,4 +151,42 @@ test('the Notion client queries only allowed data sources: a listed id goes out 
   assert.equal(sources.isAllowed('22222222333344445555666666666666', {}), false, 'and refused while it is not')
   assert.match(sources.unreadableNote('TASKS', new Error('notion 404: object_not_found')), /^SKIPPED:ENV — NOTION_DS_TASKS is set but unreadable: notion 404/)
   assert.equal(sources.isAllowed('33dc0af9c97480e99d5d000ba4bd72ea', {}), true, 'dashed and undashed forms are the same id')
+})
+
+test('the rules say what is true of tokens: the fork calls no model, and the PA spends Worker tokens (review 12)', () => {
+  const claude = fs.readFileSync(path.join(root, 'CLAUDE.md'), 'utf8')
+  assert.ok(!/The world burns zero tokens;/.test(claude), 'CLAUDE.md no longer claims the world burns zero tokens')
+  assert.match(claude, /The fork calls no model/)
+  assert.match(claude, /The PA spends tokens, but on the Worker/)
+})
+
+test('the rules agree on actor (confirmation review 1, 3): SPEC and CLAUDE.md both note the backstop; ADR-0008 and V-U16 say plainly that naming Christoffer is withheld', () => {
+  const read = (f) => fs.readFileSync(path.join(root, f), 'utf8')
+  const spec = read('SPEC.md')
+  const line = spec.split('\n').find((l) => l.startsWith('- Annex III: `actor` draws an avatar'))
+  assert.ok(line, 'SPEC.md keeps its Annex III line')
+  assert.match(line, /2026-10-05, by the developer under delegated authority, to ratify/)
+  assert.match(line, /backstop/)
+  assert.match(line, /never shows, stores, ranks or logs them/)
+  assert.match(read('CLAUDE.md'), /deny-list: the PA's backstop/)
+  assert.match(read('docs/adr/0008-the-pa-is-asked-through-the-sidecar.md'), /"Alpha waits on Christoffer's approval\." is withheld/)
+  assert.match(read('VERIFICATION.md'), /\*\*Expect this withheld:\*\* an answer that names Christoffer/)
+})
+
+test('VERIFICATION and RUNBOOK cite the Compass repo\'s ADR and RUNBOOK by number AND title (confirmation review 5)', () => {
+  const read = (f) => fs.readFileSync(path.join(root, f), 'utf8')
+  const v = read('VERIFICATION.md')
+  assert.match(v, /ADR-0012, "`POST \/ask`: the PA is a governed run on the Worker"/)
+  assert.match(v, /RUNBOOK §13 · "The PA route — `POST \/ask`"/)
+  assert.ok(!/\(ADR-0009 in the Compass repo\)|RUNBOOK §9;/.test(v), 'the old numbers alone are gone')
+  assert.match(read('RUNBOOK.md'), /RUNBOOK §13 · "The PA route — `POST \/ask`"/)
+})
+
+test('ADR-0008 says where known names come from and what the backstop cannot catch (review of ed7aba9, 1 and 3)', () => {
+  const adr = fs.readFileSync(path.join(root, 'docs/adr/0008-the-pa-is-asked-through-the-sidecar.md'), 'utf8')
+  assert.match(adr, /from the substrate only/)
+  assert.match(adr, /Never from ledger events or rows/)
+  assert.match(adr, /An inactive client seen only in events, used as an actor, is\s+withheld/)
+  assert.match(adr, /a real person whose handle equals a skipped value: someone whose handle is `claude`; a sole-trader client named\s+after its owner/)
+  assert.match(adr, /a handle that equals a company key or a room id/)
 })

@@ -10,15 +10,19 @@
 #                                                   run_started_at marker makes every later prompt a no-op.
 #   ledger.sh gate_waiting    PermissionRequest   — gate_waiting, gate id appended to .claude/state/<session>.gates
 #   ledger.sh gate_passed     PostToolUse + PostToolUseFailure — closes the matching gate (tool_failed on failure)
-#   ledger.sh run_completed   SessionEnd          — with the marker: rejects gates still open, posts run_completed, removes
-#                                                   the files. Without it (a helper session): removes the files, posts nothing.
+#   ledger.sh run_completed   SessionEnd          — with the marker: rejects gates still open and posts run_completed — the
+#                                                   closes and the end in ONE POST {"events":[…]}, curl -m 2 (less when the sum
+#                                                   ran long), so SessionEnd stays well inside its 10 s — then removes the files.
+#                                                   Without it (a helper session): removes the files, posts nothing.
 #                                                   U35 (ES-4.13): the payload carries usage summed from the session transcript
 #                                                   (hook input transcript_path; on the reconcile path ~/.claude/projects/<slug>/
-#                                                   <session_id>.jsonl) — assistant entries' message.usage, deduplicated on
-#                                                   message.id (the last entry per id wins: streaming writes several), the last
-#                                                   message.model seen, source "transcript". No transcript → no usage key.
+#                                                   <session_id>.jsonl) and its subagents' transcripts by .claude/hooks/usage.mjs,
+#                                                   the template's count ported. No transcript → no usage key. A sum past its
+#                                                   deadline (HOOK_USAGE_DEADLINE_MS, 6 s, at most 8 s) is dropped: run_completed
+#                                                   goes without usage and says usage_skipped "timeout".
 #   ledger.sh usage <path>    (tests, the ledger row) — prints that usage object for a transcript, or nothing.
-# Reads the hook's JSON input on stdin. Never blocks the session: every failure exits 0 quietly.
+# Reads the hook's JSON input on stdin. Never blocks the session: every failure exits 0 quietly. Needs jq and shasum;
+# the usage count needs node (without it, no usage key). LEDGER_SKIP_DOTENV=1 (tests only) does not read .env.
 # HOOK_DRY_RUN=1 prints each would-be POST body on stdout instead of sending it (never prints the token).
 # Privacy: references only — no tool input, no command text, no file contents, no prompt text (Compass rule 6; the
 # Worker refuses content-shaped keys anyway). The gate id carries a sha1 prefix of the tool input, never the input.
@@ -32,28 +36,44 @@
 # resumed session's first prompt) is a duplicate the Worker ignores (on_conflict=id, ignore-duplicates).
 set -u
 EVENT="${1:-}"
+# now_ms → milliseconds since the epoch: bash 5's EPOCHREALTIME, else perl (macOS and CI images have it), else whole
+# seconds. SessionEnd's budget is wall-clock from the hook's own start, so it holds on a loaded machine too.
+now_ms() {
+  if [ -n "${EPOCHREALTIME:-}" ]; then local t="${EPOCHREALTIME/[.,]/}"; echo $(( t / 1000 )); return; fi
+  perl -MTime::HiRes=time -e 'printf "%d\n", time*1000' 2>/dev/null || echo $(( $(date +%s) * 1000 ))
+}
+case "$EVENT" in run_completed) HOOK_T0="$(now_ms)" ;; esac   # before anything else: the budget counts from here
 HERE="$(cd "$(dirname "$0")/../.." && pwd)"
-# usage_json <transcript path> → the usage object for run_completed (U35), or nothing when the file is missing or unreadable.
-# Sums assistant entries' message.usage {input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens},
-# deduplicated on message.id (the last entry per id wins), plus the last message.model seen in file order. Never a prompt,
-# never a tool input, never a transcript line — four counters and a model id, well under 8 KB and no refused key.
+# usage_result <transcript path> [until, ms since the epoch] → one line {"usage": {…}|null, "skipped": "timeout"|null, "elapsed_ms": n} from
+# .claude/hooks/usage.mjs (the template's count, ported: the session transcript and <session>/subagents/*.jsonl, one
+# de-duplication across all of them, the cache split, by_model, subagents — see that file), or nothing: no path, no
+# node, or no answer. usage.mjs keeps its own deadline and ends itself after a timeout; this waits at most 9 s more
+# for it as a last resort (a node that cannot even start), so SessionEnd always reaches its post.
+usage_result() {
+  [ -n "${1:-}" ] || return 0
+  command -v node >/dev/null 2>&1 || return 0
+  local tmp pid timer
+  tmp="$(mktemp "${TMPDIR:-/tmp}/aw-usage.XXXXXX")" || return 0
+  node "$HERE/.claude/hooks/usage.mjs" "$1" ${2:+--until "$2"} </dev/null >"$tmp" 2>/dev/null &
+  pid=$!
+  ( sleep 9; kill -KILL "$pid" 2>/dev/null ) </dev/null >/dev/null 2>&1 &
+  timer=$!
+  { wait "$pid"; } 2>/dev/null
+  kill "$timer" 2>/dev/null; { wait "$timer"; } 2>/dev/null
+  head -n 1 "$tmp" | jq -ce 'select(type == "object")' 2>/dev/null
+  rm -f "$tmp"
+  return 0
+}
+# usage_json <transcript path> → just the usage object, or nothing (the row's tokens; `ledger.sh usage`).
 usage_json() {
-  [ -n "${1:-}" ] && [ -r "$1" ] || return 0
-  command -v jq >/dev/null 2>&1 || return 0
-  jq -cn '
-    [inputs | select(type == "object" and .type == "assistant" and (.message.usage | type) == "object")] as $a
-    | ($a | group_by(.message.id // .uuid) | map(last)) as $d
-    | { input_tokens: ([$d[].message.usage.input_tokens // 0] | add // 0),
-        output_tokens: ([$d[].message.usage.output_tokens // 0] | add // 0),
-        cache_creation_input_tokens: ([$d[].message.usage.cache_creation_input_tokens // 0] | add // 0),
-        cache_read_input_tokens: ([$d[].message.usage.cache_read_input_tokens // 0] | add // 0),
-        model: ([$a[].message.model // empty] | last // null),
-        source: "transcript" }
-    | select((.input_tokens + .output_tokens + .cache_creation_input_tokens + .cache_read_input_tokens) > 0)
-  ' "$1" 2>/dev/null || true
+  local r
+  r="$(usage_result "${1:-}")"
+  [ -n "$r" ] || return 0
+  if [ "$(printf '%s' "$r" | jq -r '.skipped // empty')" = "timeout" ]; then echo "usage skipped: timeout (HOOK_USAGE_DEADLINE_MS)" >&2; return 0; fi
+  printf '%s' "$r" | jq -c '.usage // empty'
 }
 if [ "$EVENT" = "usage" ]; then usage_json "${2:-}"; exit 0; fi
-[ -f "$HERE/.env" ] && set -a && . "$HERE/.env" && set +a
+[ -z "${LEDGER_SKIP_DOTENV:-}" ] && [ -f "$HERE/.env" ] && set -a && . "$HERE/.env" && set +a
 : "${EVENTS_URL:=https://tellefsen-compass-mcp.christoffer-7e3.workers.dev/events}"
 DRY_RUN="${HOOK_DRY_RUN:-${LEDGER_DRY_RUN:-}}"
 [ -n "${EVENTS_BEARER_TOKEN:-}" ] || [ -n "$DRY_RUN" ] || exit 0   # no token, no ledger — the session still runs
@@ -78,9 +98,9 @@ PROJECTS_DIR="${LEDGER_PROJECTS_DIR:-$HOME/.claude/projects}"  # where Claude Co
 STALE_MINUTES="${LEDGER_STALE_MINUTES:-30}"
 mkdir -p "$STATE_DIR"
 
-post() {  # $1 = JSON body. Dry run prints the body instead (offline tests; never prints the token).
+post() {  # $1 = JSON body, $2 = curl's --max-time (default 4 s). Dry run prints the body instead (never the token).
   if [ -n "$DRY_RUN" ]; then printf '%s\n' "$1"; return 0; fi
-  curl -s -m 4 -o /dev/null -X POST "$EVENTS_URL" \
+  curl -s -m "${2:-4}" -o /dev/null -X POST "$EVENTS_URL" \
     -H "Authorization: Bearer $EVENTS_BEARER_TOKEN" \
     -H "Content-Type: application/json" \
     --data "$1" || true
@@ -122,22 +142,41 @@ started() {  # $1 = session id
   elif [ -f "$STATE_DIR/$1.gates" ]; then echo legacy
   else echo no; fi
 }
-close_run() {  # $1 = run_id, $2 = gates file, $3 = note for the rejected closes, $4 = run_completed payload
-  local key gate extra
+# close_run: the open gates' closes (rejected) and run_completed in ONE POST {"events":[…]} (review item 3, 2026-10-05):
+# one round trip, so a Worker that never answers costs the hook one --max-time, not one per gate. The Worker takes at
+# most 50 events a request, so at most 49 closes ride with the end (a session never has that many prompts open at once).
+close_run() {  # $1 = run_id, $2 = gates file, $3 = note for the rejected closes, $4 = run_completed payload, $5 = the budget's end (ms)
+  local key gate extra events n=0
   extra="$(jq -cn --arg n "$3" '{result:"rejected",note:$n}')"
+  events=""
   while IFS=$'\t' read -r key gate; do
     [ -n "$gate" ] || continue
+    [ "$n" -lt 49 ] || break
+    n=$((n + 1))
     printf 'close\t%s\n' "$gate" >> "$2"
-    post "$(base "$1" gate_passed "$(gate_payload "$gate" "$extra")" "$(eid "$1" "$gate" gate_passed)")"
+    events="$events$(base "$1" gate_passed "$(gate_payload "$gate" "$extra")" "$(eid "$1" "$gate" gate_passed)")"$'\n'
   done < <(open_gates "$2")
-  post "$(base "$1" run_completed "$4" "$(eid "$1" "" run_completed)")"
+  events="$events$(base "$1" run_completed "$4" "$(eid "$1" "" run_completed)")"
+  events="$(printf '%s\n' "$events" | jq -cs '{events: .}')"
+  post "$events" "$(post_max $(( ${5:-0} - $(now_ms) )))"
   rm -f "$2"
 }
-# with_usage <payload json> <transcript path> → the payload plus {usage} when the transcript sums to something (U35).
+# with_usage <payload json> <usage_result line> → the payload plus {usage} when the transcripts sum to something (U35),
+# or {usage_skipped: "timeout"} when the sum ran past its deadline — the run still ends, without a count.
 with_usage() {
-  local u
-  u="$(usage_json "${2:-}")"
-  if [ -n "$u" ]; then jq -cn --argjson p "$1" --argjson u "$u" '$p + {usage: $u}'; else printf '%s' "$1"; fi
+  jq -cn --argjson p "$1" --argjson r "${2:-null}" '$p + (if ($r | type) != "object" then {} elif $r.usage then {usage: $r.usage} elif $r.skipped then {usage_skipped: $r.skipped} else {} end)'
+}
+# SessionEnd's budget: 9 s of the hook's 10 s, wall-clock from the hook's start (LEDGER_POST_BUDGET_MS, tests only, may
+# only lower it). The sum may run until 1 s before its end (usage.mjs --until; never past its own 6 s / 8 s deadline),
+# and the POST gets what is left when it goes: 2 s at most, never under 0.5 s.
+post_budget_ms() {
+  case "${LEDGER_POST_BUDGET_MS:-}" in ''|*[!0-9]*) echo 9000 ;; *) [ "$LEDGER_POST_BUDGET_MS" -lt 9000 ] && echo "$LEDGER_POST_BUDGET_MS" || echo 9000 ;; esac
+}
+# post_max <ms left> → curl's --max-time in seconds: 2 at most, 0.5 at least.
+post_max() {
+  local r="${1:-0}"
+  case "$r" in -*|''|*[!0-9-]*) r=0 ;; esac
+  if [ "$r" -ge 2000 ]; then echo 2; elif [ "$r" -le 500 ]; then echo 0.5; else printf '%d.%03d\n' $(( r / 1000 )) $(( r % 1000 )); fi
 }
 # transcript_for <session id> → the path Claude Code writes the session's transcript to: <projects>/<slug of cwd>/<id>.jsonl,
 # the slug being the cwd with every character outside [A-Za-z0-9] as "-" (the state file carries the cwd; else this repo).
@@ -149,8 +188,13 @@ transcript_for() {
   printf '%s/%s/%s.jsonl' "$PROJECTS_DIR" "$slug" "$1"
 }
 end_session() {  # $1 = session id, $2 = note for rejected closes, $3 = run_completed payload, $4 = transcript path. Posts only if run_started was.
+  local r end
   case "$(started "$1")" in
-    yes|legacy) close_run "$1" "$STATE_DIR/$1.gates" "$2" "$(with_usage "$3" "${4:-}")" ;;
+    yes|legacy)
+      # the budget runs from the hook's start at SessionEnd; a reconcile at SessionStart gives each closed session its own
+      end=$(( ${HOOK_T0:-$(now_ms)} + $(post_budget_ms) ))
+      r="$(usage_result "${4:-}" $(( end - 1000 )))"
+      close_run "$1" "$STATE_DIR/$1.gates" "$2" "$(with_usage "$3" "$r")" "$end" ;;
     *) rm -f "$STATE_DIR/$1.gates" ;;
   esac
   rm -f "$STATE_DIR/$1.session"

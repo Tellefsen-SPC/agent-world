@@ -39,6 +39,10 @@ export function makeViewer({ tenant = 'tellefsen', preset = 'owner', pack = '' }
     canWriteLayout() {
       return viewer.capabilities.includes('layout')
     },
+    /** The PA (U16, ES-4.6) is asked only by a viewer holding `ask` — of the presets, the Owner. Every ask spends tokens. */
+    canAsk() {
+      return viewer.capabilities.includes('ask')
+    },
   }
   return viewer
 }

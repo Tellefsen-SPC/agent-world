@@ -27,6 +27,7 @@ Status:
 | [0005](0005-spend-is-owner-only.md) | Spend is the Owner's: clients never see cost, and the server enforces it | 2026-09-08 · ES-4.13; 2026-10-04 · D10 | Decided by the developer under delegated authority, 2026-10-04 — to ratify (D10 in the developer's decisions record of 2026-10-04, to be logged by Christoffer as a 🧠 Decision); Owner-only itself Accepted (ES-4.13) |
 | [0006](0006-m3-identity-is-cloudflare-access.md) | Identity for the hosted M3 world is Cloudflare Access with the firm's Google accounts | 2026-10-04 · D10 | Decided by the developer under delegated authority, 2026-10-04 — to ratify (D10 in the developer's decisions record of 2026-10-04, to be logged by Christoffer as a 🧠 Decision) |
 | [0007](0007-realtime-nudge-over-the-worker-stream.md) | The realtime nudge listens to the Worker's event stream, never Supabase | 2026-10-04 · U7 | Decided, to ratify |
+| [0008](0008-the-pa-is-asked-through-the-sidecar.md) | The PA is asked through the sidecar; the browser never holds a bearer | 2026-10-05 · U16W wiring, U16 | Decided, to ratify |
 
 Format: Status · Context · Decision · Consequences, a page at most. A superseded record stays, marked
 `Superseded by NNNN`.

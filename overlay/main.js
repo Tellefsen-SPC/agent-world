@@ -32,11 +32,15 @@
 // U35 — spend (ES-4.13): a town card (a click on a town plot) and every room panel carry one line — tokens, list-price
 // cost and the window — folded in overlay/spend.mjs from the sidecar's /spend through the pack's own room rule;
 // Owner-only, nothing (not a blank line) for any other preset or under a pack that does not show it.
+// U16 — the PA panel (ES-4.6): Owner only. P (or "Ask the PA" on the selection panel and the town card) opens it; it asks
+// about the selected run, its town, a project's milestone or the whole firm through the sidecar's POST /ask, which holds
+// the bearer (docs/adr/0008), and shows the answer, what it was based on, and every other status in plain words. The
+// rules and the words are overlay/pa.mjs. No subject is a person; the placeholder asks about places and runs.
 // U12 — the skin: the planet switcher (one planet per company from Compass), the pack the planet
 // wears (skin, nouns, rooms), quiet towns (an Active client with no runs still gets its deck and
 // name plate), and the empty planet ("no substrate yet"). Every name on screen arrives from the
 // substrate through the adapter; none lives here or in a pack (npm test greps for them).
-import { ready, getWorld, currentKey, currentPlanet, townsHere, isHome, switchTo, signals, onWorldLate, loadRoom, loadArchive, loadSpend, loadSpendToday, rooms as roomsOf } from './zones.mjs'
+import { ready, getWorld, currentKey, currentPlanet, townsHere, isHome, switchTo, signals, onWorldLate, loadRoom, loadArchive, loadSpend, loadSpendToday, askPa, rooms as roomsOf } from './zones.mjs'
 import { nextTownSlot } from '../server/harnesses/compass/layout.mjs'
 import { altitudeOf, labelRule, plateText, placeCounts } from './lod.mjs'
 import { homeTarget, homeDistance } from './home.mjs'
@@ -49,6 +53,7 @@ import { shelfSections, projectTab } from './archive.mjs'
 import { foldSpend, spendLineFor, estLineFor, townLines, todayLineFor, todayIsCurrent, showSpend, summary as spendSummary } from './spend.mjs'
 import { intrayRows, nextRow, withHands } from './intray.mjs'
 import { ApproveTracker, approveIntent } from './approve.mjs'
+import { mayAsk, subjectsFor, pickSubject, requestBody, initialPa, paReduce, panelModel, MAX_QUESTION } from './pa.mjs'
 
 const LABEL = {
   working: 'Working',
@@ -191,6 +196,29 @@ html[data-aw-altitude="orbit"] #aw-panel{display:none!important}
 #aw-planets button[aria-pressed="true"]{background:var(--aw-accent);color:#fff}
 #aw-planets button.empty{opacity:.7}
 #aw-planets .pack{opacity:.5;margin-left:4px;padding-right:4px;font-size:11px}
+#aw-pa{position:fixed;right:14px;top:58px;width:min(440px,calc(100vw - 28px));max-height:calc(100vh - 80px);overflow:auto;z-index:44;display:none;
+  font:13px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--aw-ink);background:var(--aw-panel);border:1px solid var(--aw-line);
+  border-radius:14px;padding:12px 14px;backdrop-filter:blur(10px);box-shadow:0 12px 40px rgba(0,0,0,.5)}
+#aw-pa.on{display:block}
+#aw-pa .h{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}#aw-pa .h b{font-size:14px}
+#aw-pa .hint{opacity:.5;font-size:11px}
+#aw-pa .subj,#aw-pa .sugg{display:flex;flex-wrap:wrap;gap:5px;margin:4px 0 8px}
+#aw-pa .subj button,#aw-pa .sugg button{font:inherit;font-size:12px;border:0;border-radius:999px;padding:3px 10px;cursor:pointer;background:rgba(255,255,255,.08);color:var(--aw-ink)}
+#aw-pa .subj button[aria-pressed="true"]{background:var(--aw-accent);color:#fff}
+#aw-pa .sugg button{background:transparent;border:1px dashed var(--aw-line);opacity:.8}#aw-pa .sugg button:hover{opacity:1}
+#aw-pa textarea{width:100%;box-sizing:border-box;resize:vertical;min-height:58px;font:inherit;color:var(--aw-ink);background:rgba(255,255,255,.05);border:1px solid var(--aw-line);border-radius:9px;padding:8px 10px}
+#aw-pa .row{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:6px}
+#aw-pa .row .bad{color:var(--aw-block);opacity:.9}
+#aw-pa #aw-pa-send{font:inherit;border:0;border-radius:8px;padding:6px 14px;cursor:pointer;background:var(--aw-accent);color:#fff}#aw-pa #aw-pa-send:disabled{opacity:.35;cursor:default}
+#aw-pa .note{opacity:.55;font-size:11px;margin:6px 0 4px}
+#aw-pa .out{margin-top:8px;padding:10px 12px;border-left:3px solid var(--aw-work);background:rgba(255,255,255,.04);border-radius:6px}
+#aw-pa .out.refused,#aw-pa .out.budget{border-left-color:var(--aw-done)}#aw-pa .out.off{border-left-color:var(--aw-quiet)}#aw-pa .out.error{border-left-color:var(--aw-block)}#aw-pa .out.asking{border-left-color:var(--aw-wait)}
+#aw-pa .out b{display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.75;margin-bottom:4px}
+#aw-pa .out .about{opacity:.55;font-size:11px;margin:-2px 0 6px}#aw-pa .out .ans{white-space:pre-wrap;overflow-wrap:anywhere}
+#aw-pa .out .det{opacity:.75;font-size:12px;margin-top:6px;overflow-wrap:anywhere}
+#aw-pa .based{margin-top:8px;border-top:1px solid var(--aw-line);padding-top:6px}#aw-pa .based .r{font-size:12px;padding:2px 0}#aw-pa .based .r small{opacity:.55;margin-left:6px}
+#aw-pa .meta{opacity:.45;font-size:11px;margin-top:6px;font-family:ui-monospace,Menlo,monospace}
+#aw-room button.ask{font:inherit;font-size:12px;border:0;border-radius:8px;padding:4px 10px;cursor:pointer;background:rgba(255,255,255,.1);color:var(--aw-ink);margin:0 0 10px}
 #aw-empty{position:fixed;left:50%;top:42%;transform:translate(-50%,-50%);z-index:39;text-align:center;display:none;
   font:14px system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--aw-ink);background:var(--aw-panel);border:1px solid var(--aw-line);
   border-radius:16px;padding:22px 30px;backdrop-filter:blur(10px);box-shadow:0 12px 40px rgba(0,0,0,.5)}
@@ -216,6 +244,10 @@ const room = el('aw-room')
 const toastEl = el('aw-toast')
 const switcher = el('aw-planets')
 const empty = el('aw-empty')
+const paEl = el('aw-pa')
+// U16: P and Esc reach the PA first (registered before every other overlay key): Esc closes the topmost thing, and P is
+// the PA's only for a viewer who may ask — for anyone else it stays Bot Crossing's own key (a screenshot). paKey below.
+window.addEventListener('keydown', (e) => paKey(e), true)
 
 let toastTimer = 0
 function toast(text) {
@@ -294,12 +326,13 @@ function renderFixture(agent, thread) {
     <div class="chips">${chips.join('')}</div>
     ${thread.preview && !isProject ? `<div class="note">${esc(thread.preview)}</div>` : ''}
     ${runs}${ms}
-    <div class="row"><span class="hint">A fixture is still: it never waits, never fails, never hammers · Enter opens the entity</span>
-      <span><button id="aw-open" ${url ? '' : 'disabled'}>${esc(openLabel(url))}</button></span></div>`
+    <div class="row"><span class="hint">A fixture is still: it never waits, never fails, never hammers · Enter opens the entity${paAllowed() ? ' · P asks the PA' : ''}</span>
+      <span>${paAllowed() ? '<button class="ok" id="aw-ask">Ask the PA</button> ' : ''}<button id="aw-open" ${url ? '' : 'disabled'}>${esc(openLabel(url))}</button></span></div>`
   panel.classList.add('on')
   panel.querySelector('#aw-open')?.addEventListener('click', () => {
     if (url) window.open(url, '_blank', 'noopener')
   })
+  panel.querySelector('#aw-ask')?.addEventListener('click', () => openPa(''))
   panel.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => { fixtureTab = b.dataset.tab; lastKey = ''; render(selection()) }))
 }
 /** The Archive tab (U32): the shelf scoped to this project, newest first, plus its milestones. */
@@ -394,13 +427,14 @@ function render(sel) {
     ${doBlock}
     ${subBlock}
     ${artBlock}
-    <div class="row"><span class="hint">Enter opens · N flies to the next ? · ${thread.unread ? 'A is blocked on a waiting run' : 'A hides from this view only'}</span>
-      <span>${thread.ref?.context ? `<a class="ctx" href="${esc(thread.ref.context)}" target="_blank" rel="noopener">Context ↗</a>` : ''}${cardRow?.url ? '<button class="ok" id="aw-approve">Approve</button> ' : ''}<button id="aw-open" ${url ? '' : 'disabled'}>${esc(openLabel(url))}</button></span></div>`
+    <div class="row"><span class="hint">Enter opens · N flies to the next ? · ${thread.unread ? 'A is blocked on a waiting run' : 'A hides from this view only'}${paAllowed() ? ' · P asks the PA' : ''}</span>
+      <span>${thread.ref?.context ? `<a class="ctx" href="${esc(thread.ref.context)}" target="_blank" rel="noopener">Context ↗</a>` : ''}${paAllowed() ? '<button class="ok" id="aw-ask">Ask the PA</button> ' : ''}${cardRow?.url ? '<button class="ok" id="aw-approve">Approve</button> ' : ''}<button id="aw-open" ${url ? '' : 'disabled'}>${esc(openLabel(url))}</button></span></div>`
   panel.classList.add('on')
   panel.querySelector('#aw-open')?.addEventListener('click', () => {
     if (url) window.open(url, '_blank', 'noopener')
   })
   panel.querySelector('#aw-approve')?.addEventListener('click', () => approve(cardRow))
+  panel.querySelector('#aw-ask')?.addEventListener('click', () => openPa(''))
   panel.querySelectorAll('.sub[data-sub]').forEach((s) => s.addEventListener('click', () => window.botCrossing?.hud?.actions?.focusThread?.(s.dataset.sub)))
   panel.querySelectorAll('button[data-art]').forEach((b) =>
     b.addEventListener('click', () => {
@@ -424,8 +458,9 @@ setInterval(() => {
   }
   if (!sel) flownTo = ''
   const cr = sel ? intrayRows([sel.thread])[0] : null
-  const key = sel ? [sel.agent.id, sel.agent.status, sel.thread.title, sel.thread.gitBranch, sel.thread.unread, sel.thread.kind === 'fixture' ? sel.thread.runningCount + ':' + sel.thread.check : sel.thread.lastActivityAt, (sel.thread.artifacts || []).length, newestArtifactAt(sel.thread), cr ? approvals.state(cr.id, cr.gate, cr.url) : ''].join('|') : ''
+  const key = sel ? [sel.agent.id, sel.agent.status, sel.thread.title, sel.thread.gitBranch, sel.thread.unread, sel.thread.kind === 'fixture' ? sel.thread.runningCount + ':' + sel.thread.check : sel.thread.lastActivityAt, (sel.thread.artifacts || []).length, newestArtifactAt(sel.thread), cr ? approvals.state(cr.id, cr.gate, cr.url) : '', paAllowed()].join('|') : ''
   syncQuietLabels()
+  syncPa()
   if (key === lastKey) return
   lastKey = key
   render(sel)
@@ -609,9 +644,11 @@ function renderTown() {
   room.innerHTML =
     `<div class="h"><b>${esc(noun('town'))} · ${esc(name)}</b><span class="hint">a client's ${esc(noun('town'))} · read-only · Esc closes</span></div>` +
     townLinesHtml(name) +
+    (paAllowed() ? `<button class="ask" id="aw-town-ask">Ask the PA about this ${esc(noun('town'))}</button>` : '') +
     `<div class="cols"><div class="col town"><h3>Standing here · ${here.length}</h3>${rows.join('') || '<div class="note">nothing stands here — no request, no fixture</div>'}</div></div>` +
     `<div class="foot">${spendFold?.at ? 'spend as of ' + esc(new Date(spendFold.at).toLocaleTimeString()) + ' · ' : ''}the ${esc(noun('town'))} mirrors its client — change things on the surfaces, never here</div>`
   room.classList.add('on')
+  room.querySelector('#aw-town-ask')?.addEventListener('click', () => openPa(`town:${name}`))
 }
 function openTown(name) {
   townOpen = townOpen === name ? '' : name
@@ -619,6 +656,151 @@ function openTown(name) {
   if (!townOpen) return room.classList.remove('on')
   renderTown()
   refreshSpend().then(() => townOpen === name && renderTown())
+}
+
+// ── U16: the PA panel (ES-4.6) ───────────────────────────────────────────────────────────────
+//
+// Owner only (the `ask` capability; the sidecar refuses anyone else too): P, or "Ask the PA" on the selection panel or the
+// town card, opens it. It asks about the selected run, its town, a project or one of its milestones, or the whole firm —
+// the subjects overlay/pa.mjs builds from what is selected; none of them is a person. The question goes to the sidecar's
+// POST /ask (zones.mjs askPa) and nowhere else; the bearer stays on the server (docs/adr/0008). The answer is shown with
+// what it was asked about and what it was based on; every other status is said in words (pa.mjs viewOf). Nothing here
+// stores anything: the state is this page's, and goes with it.
+let pa = initialPa()
+const paAllowed = () => mayAsk(getWorld()?.viewer)
+const paSubjects = () => subjectsFor({ thread: selection()?.thread || null, town: townOpen, towns: (getWorld()?.towns || []).map((t) => t.name), noun: noun('town') })
+let paBuilt = false // the shell (and its textarea) is built once per open, so typing never loses the caret
+let paSubjectsKey = ''
+function paOutHtml(m) {
+  if (m.pending) return `<div class="out asking"><b>Asking</b><div class="about">about ${esc(m.askedAbout)}</div><div class="ans">The Worker reads the substrate, then asks the model. It can take up to half a minute.</div></div>`
+  const v = m.view
+  if (!v) return ''
+  return `<div class="out ${esc(v.tone)}"><b>${esc(v.title)}</b>${m.askedAbout ? `<div class="about">about ${esc(m.askedAbout)}</div>` : ''}<div class="ans">${esc(v.text)}</div>` +
+    (v.detail ? `<div class="det">${esc(v.detail)}</div>` : '') +
+    (v.wait ? `<div class="det">${esc(v.wait)}</div>` : '') +
+    v.notes.map((t) => `<div class="det">${esc(t)}</div>`).join('') +
+    (v.basedOn.length ? `<div class="based"><b>Based on</b>${v.basedOn.map((r) => `<div class="r" title="${esc(r.ref)}">${esc(r.label)}${r.note ? `<small>${esc(r.note)}</small>` : ''}</div>`).join('')}</div>` : '') +
+    (v.meta ? `<div class="meta">${esc(v.meta)}</div>` : '') +
+    '</div>'
+}
+function renderPa() {
+  const subjects = paSubjects()
+  const m = panelModel({ viewer: getWorld()?.viewer, state: pa, subjects })
+  if (!m) {
+    // not open, or a viewer without `ask`: no element at all
+    paEl.classList.remove('on')
+    paEl.innerHTML = ''
+    paBuilt = false
+    return
+  }
+  if (!paBuilt) {
+    paEl.innerHTML = `<div class="h"><b>Ask the PA</b><span class="hint">Enter asks · Shift+Enter a new line · Esc closes</span></div>
+      <div class="subj" id="aw-pa-subj"></div>
+      <textarea id="aw-pa-q" rows="3" maxlength="${MAX_QUESTION}" placeholder="${esc(m.placeholder)}"></textarea>
+      <div class="sugg" id="aw-pa-sugg"></div>
+      <div class="row"><span class="hint" id="aw-pa-count"></span><button id="aw-pa-send">Ask</button></div>
+      <div class="note">${esc(m.hint)}</div>
+      <div id="aw-pa-out"></div>`
+    paBuilt = true
+    paSubjectsKey = ''
+    const q = paEl.querySelector('#aw-pa-q')
+    q.value = pa.question
+    q.addEventListener('input', () => {
+      pa = paReduce(pa, { type: 'type', text: q.value })
+      renderPaFoot()
+    })
+    q.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+        e.preventDefault()
+        sendPa()
+      }
+    })
+    paEl.querySelector('#aw-pa-send').addEventListener('click', sendPa)
+  }
+  const key = m.subjects.map((s) => `${s.id}${s.pressed ? '*' : ''}`).join('|')
+  if (key !== paSubjectsKey) {
+    paSubjectsKey = key
+    paEl.querySelector('#aw-pa-subj').innerHTML = m.subjects.map((s) => `<button data-subj="${esc(s.id)}" aria-pressed="${s.pressed}">${esc(s.label)}</button>`).join('')
+    paEl.querySelector('#aw-pa-sugg').innerHTML = m.suggestions.map((t) => `<button data-sugg>${esc(t)}</button>`).join('')
+  }
+  renderPaFoot(m)
+  paEl.querySelector('#aw-pa-out').innerHTML = paOutHtml(m)
+  paEl.classList.add('on')
+}
+// one delegated listener on the panel element itself (it outlives every rebuild of its contents): a subject, a suggestion
+paEl.addEventListener('click', (e) => {
+  const subj = e.target.closest?.('button[data-subj]')
+  if (subj) {
+    pa = paReduce(pa, { type: 'subject', id: subj.dataset.subj })
+    return renderPa()
+  }
+  const sugg = e.target.closest?.('button[data-sugg]')
+  const q = paEl.querySelector('#aw-pa-q')
+  if (sugg && q) {
+    q.value = sugg.textContent
+    pa = paReduce(pa, { type: 'type', text: q.value })
+    renderPaFoot()
+    q.focus()
+  }
+})
+/** The counter and the button only — called on every keystroke. */
+function renderPaFoot(model) {
+  if (!paBuilt) return
+  const m = model || panelModel({ viewer: getWorld()?.viewer, state: pa, subjects: paSubjects() })
+  if (!m) return
+  const count = paEl.querySelector('#aw-pa-count')
+  count.textContent = m.problem || m.count
+  count.classList.toggle('bad', Boolean(m.problem))
+  const send = paEl.querySelector('#aw-pa-send')
+  send.disabled = !m.canSend
+  send.textContent = m.sendLabel
+}
+async function sendPa() {
+  const subject = pickSubject(paSubjects(), pa.subjectId)
+  const next = paReduce(pa, { type: 'send', subject })
+  if (next === pa) return renderPa() // nothing to send: empty, too long, or one already out
+  pa = next
+  const body = requestBody(pa.question, subject)
+  renderPa()
+  const r = await askPa(body)
+  pa = paReduce(pa, { type: 'result', status: r.status, body: r.body })
+  renderPa()
+}
+function openPa(subjectId = '') {
+  if (!paAllowed()) return false
+  pa = paReduce(pa, { type: 'open', subjectId })
+  renderPa()
+  paEl.querySelector('#aw-pa-q')?.focus()
+  return true
+}
+function closePa() {
+  pa = paReduce(pa, { type: 'close' })
+  renderPa()
+}
+/** The selection moved (or the world arrived): redraw the subjects while the panel is open; hide it for a viewer without `ask`. */
+function syncPa() {
+  if (!pa.open && !paEl.classList.contains('on')) return
+  const key = paAllowed() + '|' + paSubjects().map((s) => s.id).join('|')
+  if (key !== syncPa.last) {
+    syncPa.last = key
+    renderPa()
+  }
+}
+function paKey(e) {
+  if (e.key === 'Escape' && pa.open) {
+    e.stopImmediatePropagation()
+    e.preventDefault()
+    return closePa()
+  }
+  if (e.key !== 'p' && e.key !== 'P') return
+  if (e.metaKey || e.ctrlKey || e.altKey) return
+  const t = e.target
+  if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement) return
+  if (!paAllowed()) return // not the Owner: P stays Bot Crossing's screenshot key
+  e.stopPropagation()
+  e.preventDefault()
+  if (pa.open) closePa()
+  else openPa('')
 }
 
 // ── U32: the archive ────────────────────────────────────────────────────────────────────────
@@ -683,7 +865,7 @@ window.addEventListener(
 setInterval(() => roomOpen && refreshRoom(true), 60_000) // the sidecar's caches decide the cost; the panel never holds a stale copy of its own
 setInterval(() => (roomOpen || townOpen) && refreshSpend(true).then(() => (townOpen ? renderTown() : roomOpen && roomOpen !== 'archive' && renderRoom())), 60_000)
 // a console handle for the verifier and the checks: open a room by id, read what is open. No state, no write.
-window.agentWorld = Object.assign(window.agentWorld || {}, { openRoom, roomOpen: () => roomOpen, rooms: () => roomsOf().map((r) => r.id), refresh: () => refreshRoom(true), openTown, townOpen: () => townOpen, spend: () => spendSummary(spendFold), refreshSpend: () => refreshSpend(true).then(() => spendSummary(spendFold)) })
+window.agentWorld = Object.assign(window.agentWorld || {}, { openRoom, roomOpen: () => roomOpen, rooms: () => roomsOf().map((r) => r.id), refresh: () => refreshRoom(true), openTown, townOpen: () => townOpen, spend: () => spendSummary(spendFold), refreshSpend: () => refreshSpend(true).then(() => spendSummary(spendFold)), openPa, paOpen: () => pa.open })
 // a click on a room plot (no figure under the pointer) opens its panel — the hex under the pointer against the rooms' cells
 let downAt = null
 window.addEventListener('pointerdown', (e) => { downAt = { x: e.clientX, y: e.clientY } }, true)

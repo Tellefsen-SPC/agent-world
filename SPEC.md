@@ -8,10 +8,10 @@ Written 2026-09-06 by build-kickoff v1.3 from the Notion Project *Agent World â€
 
 **Hard constraints.**
 - The world is a mirror. It holds no state except map layout; every rendered fact is read from Compass (Supabase), Notion or Airtable. It writes nothing to the substrate, ever.
-- Zero tokens. No model call exists anywhere in the fork. Nothing in the world thinks.
+- Zero tokens. No model call exists anywhere in the fork. Nothing in the world thinks. *(2026-10-05, to ratify: still true of the fork; the PA (ES-4.6) spends tokens on the Worker, which makes its one model call â€” the world forwards the question and never calls a model itself)*
 - `src/` stays byte-identical to upstream. One adapter file (plus its helper folder) under `server/harnesses/` is the whole seam.
 - Only states that want something from a human get a badge; silence is the feature.
-- Annex III: `actor` draws an avatar, nothing else. No per-person rendering or aggregation.
+- Annex III: `actor` draws an avatar, nothing else. No per-person rendering or aggregation. *(2026-10-05, by the developer under delegated authority, to ratify: one more use, a protective one. The PA's backstop (ADR-0008) reads the actor values of the ledger window on the server, and only to withhold a PA answer that names one of them. It never shows, stores, ranks or logs them. The values stay in memory with the scan, the page never receives one, and system actors and names the world already knows are skipped.)*
 - Local only at M1: `127.0.0.1:5274`, one user (Owner). No Supabase URL or service-role key on this machine: the ledger is read through the Worker (U10) with the events bearer token in `.env`. Hosting, auth and RLS are M3. *(corrected 2026-10-04, to ratify: this line said "service-role key in `.env`", which was never true after the U10 pivot of 2026-09-06)*
 
 **The one thing that must be true.** The adapter turns the events stream and the ledger into Bot Crossing's thread shape *truthfully*: the right run on the right plot with the right badge, within one poll of the substrate changing. If that holds, everything else in the phase is craft. It is built and verified first (U3).

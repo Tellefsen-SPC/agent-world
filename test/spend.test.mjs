@@ -127,7 +127,8 @@ test('U35: no "actor" on the spend path — overlay/spend.mjs, compass/spend.mjs
 test('U35: the hook sums a transcript — deduplicated on message.id (last entry wins), the last model seen, source transcript; a missing transcript yields nothing', () => {
   const hook = path.join(root, '.claude/hooks/ledger.sh')
   const out = execFileSync('bash', [hook, 'usage', path.join(root, 'test/fixtures/m2b-transcript.jsonl')], { encoding: 'utf8' }).trim()
-  assert.deepEqual(JSON.parse(out), { input_tokens: 102, output_tokens: 277, cache_creation_input_tokens: 42289, cache_read_input_tokens: 41090, model: 'claude-sonnet-5', source: 'transcript' })
+  // the six keys as U35 built them; since 2026-10-05 (aligned with the template) two models doing work add by_model
+  assert.deepEqual(JSON.parse(out), { input_tokens: 102, output_tokens: 277, cache_creation_input_tokens: 42289, cache_read_input_tokens: 41090, model: 'claude-sonnet-5', source: 'transcript', by_model: { 'claude-fable-5-1': { input_tokens: 2, output_tokens: 247, cache_creation_input_tokens: 42239, cache_read_input_tokens: 39090 }, 'claude-sonnet-5': { input_tokens: 100, output_tokens: 30, cache_creation_input_tokens: 50, cache_read_input_tokens: 2000 } } })
   assert.equal(execFileSync('bash', [hook, 'usage', path.join(root, 'test/fixtures/no-such-transcript.jsonl')], { encoding: 'utf8' }).trim(), '')
   assert.equal(execFileSync('bash', [hook, 'usage'], { encoding: 'utf8' }).trim(), '')
   assert.ok(Buffer.byteLength(out) < 8 * 1024)
@@ -137,8 +138,9 @@ test('U35: the hook sums a transcript — deduplicated on message.id (last entry
 test('U35: SessionEnd posts run_completed with usage (dry run), without usage when there is no transcript, and the reconcile at the next SessionStart reads the closed session\'s transcript from the projects dir', () => {
   const hook = path.join(root, '.claude/hooks/ledger.sh')
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-hook-'))
-  const env = { ...process.env, HOOK_DRY_RUN: '1', LEDGER_STATE_DIR: path.join(tmp, 'state'), LEDGER_RUN_ID_FILE: path.join(tmp, 'run_id'), LEDGER_PROJECTS_DIR: path.join(tmp, 'projects'), LEDGER_STALE_MINUTES: '30' }
-  const run = (event, input) => execFileSync('bash', [hook, event], { encoding: 'utf8', env, input: JSON.stringify(input) }).trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))
+  const env = { ...process.env, HOOK_DRY_RUN: '1', LEDGER_SKIP_DOTENV: '1', LEDGER_STATE_DIR: path.join(tmp, 'state'), LEDGER_RUN_ID_FILE: path.join(tmp, 'run_id'), LEDGER_PROJECTS_DIR: path.join(tmp, 'projects'), LEDGER_STALE_MINUTES: '30' }
+  // since 2026-10-05 SessionEnd posts its closes and run_completed as one {"events":[…]} body: read the events out of it
+  const run = (event, input) => execFileSync('bash', [hook, event], { encoding: 'utf8', env, input: JSON.stringify(input) }).trim().split('\n').filter(Boolean).flatMap((l) => { const o = JSON.parse(l); return Array.isArray(o.events) ? o.events : [o] })
   const transcript = path.join(root, 'test/fixtures/m2b-transcript.jsonl')
   // a session with a transcript
   const s1 = 'zztest-hook-s1'
@@ -146,7 +148,7 @@ test('U35: SessionEnd posts run_completed with usage (dry run), without usage wh
   const ended = run('run_completed', { session_id: s1, hook_event_name: 'SessionEnd', transcript_path: transcript })
   const done = ended.find((e) => e.event_type === 'run_completed')
   assert.equal(done.payload.outcome, 'success')
-  assert.deepEqual(done.payload.usage, { input_tokens: 102, output_tokens: 277, cache_creation_input_tokens: 42289, cache_read_input_tokens: 41090, model: 'claude-sonnet-5', source: 'transcript' })
+  assert.deepEqual(done.payload.usage, { input_tokens: 102, output_tokens: 277, cache_creation_input_tokens: 42289, cache_read_input_tokens: 41090, model: 'claude-sonnet-5', source: 'transcript', by_model: { 'claude-fable-5-1': { input_tokens: 2, output_tokens: 247, cache_creation_input_tokens: 42239, cache_read_input_tokens: 39090 }, 'claude-sonnet-5': { input_tokens: 100, output_tokens: 30, cache_creation_input_tokens: 50, cache_read_input_tokens: 2000 } } })
   assert.ok(!fs.existsSync(path.join(tmp, 'state', `${s1}.session`)), 'the state file is gone')
   // a session without one: run_completed, no usage key, exit 0
   const s2 = 'zztest-hook-s2'

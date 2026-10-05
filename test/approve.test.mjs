@@ -72,18 +72,25 @@ test('U15: a row opens its OWN gate\'s surface, not the newest one — a run tha
   assert.equal(rows.find((r) => r.id === 'sess').url, 'https://claude.ai/project/x', 'a session gate opens where the answer goes, not its context page')
 })
 
-test('U15: Approve calls no Worker write route — the overlay makes no non-GET request except the layout seam, and never names the Worker', () => {
+// U16 (2026-10-05): the overlay's one non-GET is the PA's question — POST to the sidecar's own /ask (zones.mjs askPa), never to
+// the Worker; the sidecar adds the bearer (docs/adr/0008). It is the exact line below, once, and nothing else may compose a method.
+const ASK_POST = "const res = await fetch(`${SIDECAR}/ask`, { method: 'POST',"
+test('U15: Approve calls no Worker write route — the overlay makes no non-GET request except the layout seam (and the PA\'s question to the sidecar, U16), and never names the Worker', () => {
   const files = fs.readdirSync(path.join(root, 'overlay')).filter((f) => /\.(m?js)$/.test(f))
   const hits = []
   for (const f of files) {
     // code only: comments may say where the write path lives (M3's /actions); code may not go there
-    const text = fs.readFileSync(path.join(root, 'overlay', f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    let text = fs.readFileSync(path.join(root, 'overlay', f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    if (f === 'zones.mjs') {
+      if (text.split(ASK_POST).length !== 2) hits.push('zones.mjs: the PA\'s POST to the sidecar\'s /ask is not there exactly once')
+      text = text.replace(ASK_POST, '')
+    }
     if (/method:\s*['"](POST|PUT|PATCH|DELETE)['"]/i.test(text)) hits.push(`${f} sets a write method`)
     if (/workers\.dev|\/events\b|\/ledger\/|\/actions\b|EVENTS_URL|BEARER/i.test(text)) hits.push(`${f} names the Worker or a bearer`)
     if (/\bfetch\(/.test(text) && f !== 'zones.mjs') hits.push(`${f} fetches (only zones.mjs may: the sidecar world and the layout seam)`)
   }
   assert.deepEqual(hits, [])
   // zones.mjs only forwards Bot Crossing's own /api/state verb to the sidecar; it composes no write of its own.
-  const zones = fs.readFileSync(path.join(root, 'overlay/zones.mjs'), 'utf8')
+  const zones = fs.readFileSync(path.join(root, 'overlay/zones.mjs'), 'utf8').replace(ASK_POST, '')
   assert.ok(!/method:\s*['"]/.test(zones))
 })

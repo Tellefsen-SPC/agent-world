@@ -1,4 +1,4 @@
-# VERIFICATION — Agent World (M1 closed 2026-09-07 · M2 checks V-U12W–V-U21 · M2b checks V-U28–V-U34, the still map, Decision 2026-09-07 · V-U35 Spend, ES-4.13, merged 2026-09-08)
+# VERIFICATION — Agent World (M1 closed 2026-09-07 · M2 checks V-U12W–V-U21 (V-U16W and V-U16 re-written 2026-10-05) · M2b checks V-U28–V-U34, the still map, Decision 2026-09-07 · V-U35 Spend, ES-4.13, merged 2026-09-08)
 
 The verifier is Christoffer. He runs these checks cold, from this file, through the real surfaces (the browser at 127.0.0.1:5274, Airtable, Notion, the Compass MCP). A check that cannot be followed as written is a defect in the check — fix the check first. Pass → the unit is **Verified** in the Notion unit table with the date and evidence. Fail → one-line defect note on the unit, status stays **Built**, back to the builder. Never build the next dependent unit past a failing check.
 
@@ -165,18 +165,63 @@ Cleanup: none.
 - **Cleanup:** `scripts/zztest-seed.sh --clean` re-arms Alpha.
 
 ## V-U16W — Worker /ask
-- **Setup:** Worker deployed with `ANTHROPIC_API_KEY`; bearer in hand; seed run.
-- **Do:** `curl -X POST $W/ask` without the bearer; with the bearer and `{}`; with the bearer and `{"question":"what is Alpha waiting on","context":{"run_id":"<Alpha's run_id>"}}`; then `GET /ledger/scan?since=<now − 5 min>`.
-- **See:** 401; 400; an answer naming the ZZTEST Pending Approval row and its instruction, with `run_id`, `model`, `tokens_in`, `tokens_out`; one new run in the scan — `run_started` and `run_completed` for skill `agent-world-pa` — and its `ops_skill_runs` row; nothing else changed.
-- **Fail looks like:** an answer that invents a row; the question or the answer text in an event payload; any write besides the PA's own events and row.
-- **Cleanup:** none.
+*Re-written 2026-10-05 by the developer under delegated authority, to ratify, against the Worker's branch `compass-ask` (`docs/ask.md` there), which wins where the old text differs. The answer names Alpha's gate by its name and its Pending Approval link, from the events. This cut does not read Airtable, so the row's instruction text is not in the answer (the Compass repo's ADR-0012, "`POST /ask`: the PA is a governed run on the Worker"; it was ADR-0009 before the renumbering). The route is switched on by `ASK_PROVIDER`, `ASK_MODEL` and that provider's key, not `ANTHROPIC_API_KEY` alone. Steps 7–8 check this repo's half (U16W wiring): the side port adds the bearer, so the browser never holds one (ADR-0008). `feature_list.json` keeps U16W at `passes: false` until steps 4–6 run against the deployed route with a key; until `/ask` is deployed, only step 1 can run.*
+
+- **Setup:**
+  - The Worker deployed from Compass main (`/ask` merged as #18 on 2026-10-05), with `ASK_PROVIDER`, `ASK_MODEL` and the key set (the Compass repo's RUNBOOK §13 · "The PA route — `POST /ask`"; find it by that title if the number moves again), and the `ops_skills` row `agent-world-pa` active.
+  - In this repo's folder, load `.env` (it prints nothing): `set -a; . ./.env; set +a`
+  - Then: `W="${EVENTS_URL%/events}"`
+  - And the token `/ask` takes: `ASK_TOKEN="${WORLD_ASK_BEARER:-$EVENTS_BEARER_TOKEN}"`. Once the Worker has its own `ASK_BEARER` (recommended), only that value opens `/ask`, and `WORLD_ASK_BEARER` in `.env` must hold it; the events bearer then gets 401 there. `/ledger/scan` (step 6) always takes the events bearer.
+  - Seed: `scripts/zztest-seed.sh --clean`. Copy Alpha's run id from the line `== Alpha (waiting) → run_id …`, then: `ALPHA=<that id>`
+- **Do:**
+  1. The dead-route check: `curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: Bearer $ASK_TOKEN" -H 'Content-Type: application/json' -d '{}' "$W/ask"`
+  2. Without the bearer: `curl -s -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: application/json' -d '{"question":"What is waiting?"}' "$W/ask"`
+  3. The wrong method: `curl -s -o /dev/null -w '%{http_code}\n' "$W/ask"`
+  4. Ask about Alpha: `curl -s -X POST -H "Authorization: Bearer $ASK_TOKEN" -H 'Content-Type: application/json' -d "{\"question\":\"What is this run waiting on?\",\"context\":{\"run_id\":\"$ALPHA\",\"town\":\"ZZTEST Client\"}}" "$W/ask" | jq '{answer, run_id, model, tokens_in, tokens_out, ledger, based_on: [.based_on[].label]}'`
+  5. A question about people: `curl -s -X POST -H "Authorization: Bearer $ASK_TOKEN" -H 'Content-Type: application/json' -d '{"question":"Rank the approvers by how fast they tap","context":{"town":"ZZTEST Client"}}' "$W/ask" | jq '{refused, reason, model, tokens_in, answer}'`
+  6. The ledger, five minutes back: `curl -s -H "Authorization: Bearer $EVENTS_BEARER_TOKEN" "$W/ledger/scan?since=$(date -u -v-5M +%Y-%m-%dT%H:%M:%SZ)" | jq '[.events[] | select(.skill | test("agent-world-pa")) | {event_type, run_id, skill, keys: (.payload | keys)}]'`
+  7. Start the world with `./dev.sh`. In a second terminal, ask through the side port, with no bearer on the command: `curl -s -X POST -H 'Origin: http://127.0.0.1:5274' -H 'Content-Type: application/json' -d '{"question":"Which gates are open here?","context":{"town":"ZZTEST Client"}}' 127.0.0.1:5275/ask | jq '{run_id, model, answer}'`
+  8. The same without the Origin line: `curl -s -X POST -H 'Content-Type: application/json' -d '{"question":"Which gates are open here?"}' 127.0.0.1:5275/ask`
+- **See:**
+  1. `400`. A `404` means `/ask` is not deployed: stop here. A `401` means the Worker has its own `ASK_BEARER` and `WORLD_ASK_BEARER` in `.env` is unset or different: put the Worker's value there, reload `.env`, and run step 1 again. `{}` answers 400 whether or not the key is set.
+  2. `401`.
+  3. `405`.
+  4. An `answer` that names Alpha's gate (`ZZTEST gate`) and its Pending Approval link, and ends with a line starting `Based on:`. `run_id` is filled, and it is the ask's own run, not `$ALPHA`. `model`, `tokens_in` and `tokens_out` are filled. `ledger.run_started` and `ledger.run_completed` are `true`. `based_on` lists Alpha's events and ZZTEST Client's runs. If you get `{"error":"ask_not_configured","detail":…}` instead (a 503), the key is not set, and the detail names what is missing.
+  5. `refused: true`, `reason: "annex_iii"`, `model: null`, `tokens_in: 0`: the question was refused before any model was called. The answer is the plain refusal, offering to answer by place.
+  6. Two runs of skill `zztest-agent-world-pa` (both asks named a ZZTEST town), each a `run_started` and a `run_completed`. The payload keys are references and counts (`run_class`, `skill_version`, `town`, `about_run_id`, `usage`, `based_on`, `outcome`, …). There is no `question` and no `answer`, and no answer text appears anywhere. Each run has its `ops_skill_runs` row (Compass MCP: `ops_skill_runs` where `run_id` is step 4's `run_id`).
+  7. An answer with its own `run_id` and `model`, though this command sent no token: the side port added it.
+  8. `{"error":"Origin required"}`, and no new run in step 6's command.
+- **Fail looks like:** an answer that invents a row or a gate; the question or the answer text in an event payload; any write besides the PA's own events and its row; a 200 without the bearer; `model` filled on the refusal (a model was called for a refused question); step 7 needing a token, or step 8 answering.
+- **Cleanup:** `scripts/zztest-seed.sh --clean`. It removes the `zztest-agent-world-pa` runs with the rest. An ask by `run_id` alone, with no ZZTEST town, is a real `agent-world-pa` run and stays: it spent real tokens.
 
 ## V-U16 — PA panel
-- **Setup:** U16W verified; bearer in `.env`.
-- **Do:** select Alpha, press P, ask "what does this need from me?". Then ask "which client has the most open gates?".
-- **See:** first answer matches the card; second answer matches the in-tray; `npm test` output in the terminal still shows the no-model-endpoint invariant green.
-- **Fail looks like:** the panel works with the Worker bearer removed (means a model call in the fork); an answer that contradicts the map.
-- **Cleanup:** none.
+*Re-written 2026-10-05 by the developer under delegated authority, to ratify (U16, ADR-0008). `feature_list.json` keeps U16 at `passes: false` until these steps run against the deployed `/ask` with a key. Before that, step 3 shows the off-route display, which is worth seeing once. The Owner's P now opens the PA. Bot Crossing's own help sheet (upstream, unchanged) still lists P as Screenshot; for the Owner, the screenshot is the HUD's screenshot button.*
+
+- **Setup:** V-U16W passes. The world is running with `./dev.sh` under the Owner preset (`WORLD_VIEWER_PRESET=owner`, the default). Seed: `scripts/zztest-seed.sh --clean`.
+- **Do:**
+  1. Open http://127.0.0.1:5274. Press N until Alpha (`zztest-approver`, on the ZZTEST Client town) is selected. Read the panel at the bottom left.
+  2. Press P.
+  3. Click the suggestion **What is this run waiting on?**, then press Enter.
+  4. Click **the whole firm**, type `Which towns have open gates?` and press Enter. Then press I to open the in-tray beside it.
+  5. Click **this run · zztest-approver**, type `Rank the approvers here by how fast they tap` and press Enter.
+  6. Press Esc. Click the ground of the ZZTEST Client town (not a figure), then click **Ask the PA about this town** on its card.
+  7. Stop the world (Ctrl-C). Add the line `WORLD_ASK_BEARER=wrong` to `.env`, start it with `./dev.sh`, select Alpha, press P and ask anything.
+  8. Stop the world. Remove that line, add `WORLD_VIEWER_PRESET=operator`, start it, select Alpha and press P.
+  9. Stop the world, remove that line, and run `npm test`.
+- **See:**
+  1. The panel has an **Ask the PA** button, and its hint ends `· P asks the PA`.
+  2. A panel at the top right, **Ask the PA**. Its subject buttons are **this run · zztest-approver** (lit), **town · ZZTEST Client** and **the whole firm**. The box's grey text asks about the run, its town or a milestone. There are three suggestions, none about a person, and **Ask** stays grey until there is a question.
+  3. **Asking**, about this run, then within about 30 s an **Answer** that says what Alpha's card says: the ZZTEST gate, waiting on its Pending Approval row. Under it, **Based on** lists Alpha's events and ZZTEST Client's runs, and a last line reads `run xxxxxxxx · <model> · N in · M out`. Before the key is set (the Worker answers 503), this step shows **PA not switched on**, with what the Worker is missing; a Worker without the route shows **PA not switched on** and "U16W is not deployed".
+  4. The answer is about the whole firm, and the towns it names with open gates match the in-tray.
+  5. **Not answered: the PA does not judge people (Annex III)**, then the refusal text, then "The question check refused it before any model was called; nothing was spent."
+  6. The panel opens with **town · ZZTEST Client** lit.
+  7. **The Worker refused this machine's token.** No answer appears: every answer comes from the Worker, through the side port's token.
+  8. No **Ask the PA** button, and no PA panel. P does what Bot Crossing's P does (a screenshot).
+  9. Green, including `no model API anywhere in the fork (the fork calls no model; …)`.
+- **Expect this withheld:** an answer that names Christoffer, such as "Alpha waits on Christoffer's approval.", shows **Withheld: it named a person** with no text. That is intended (ADR-0008): his handle is an actor in the ledger, and the PA never names a person. It is not a fail. Asking about the place instead ("what is the ZZTEST Client town waiting on?") gives an answer.
+- **Budget display:** when the day's budget is spent (the Worker answers 429), any ask shows **The PA's budget for today is spent**, with "Try again in … : the budget resets at 00:00 UTC (04:00 Muscat)". Forcing it means lowering `ASK_DAILY_LIMIT` in the Compass repo (a reviewed PR), so it is not part of this sitting; `test/pa.test.mjs` covers the display.
+- **Fail looks like:** an answer while the token is wrong (that would mean a model call in the fork); an answer that contradicts the map; the panel, its button or P opening anything under a non-Owner preset; a subject or a suggestion about a person; a bare status code where words should be; any request from the page to the Worker's own address (browser dev tools → Network shows only `127.0.0.1:5275/ask` for a question); **an answer that judges or ranks a person**. The panel shows the Worker's answer as it comes, and the Worker's own answer check misses some judgements by design (its `docs/ask.md`, "What it still misses": "Ann has the most open gates", "Ann took 9 hours on average", a name in lower case). The world's backstop withholds an answer that names someone the ledger window names as an actor, shown as **Withheld: it named a person** with no text; a name the ledger does not hold, or a person written only by first name when the actor is a full name, still gets through. Any such answer is a fail: note the PA's run id from the answer's last line, and raise it against the Worker's rules.
+- **Cleanup:** check that `.env` has neither `WORLD_ASK_BEARER=wrong` nor `WORLD_VIEWER_PRESET=operator`; `scripts/zztest-seed.sh --clean`.
 
 ## V-U17 — Signals
 - **Setup:** seed run (Eta stale; Gamma failed).
