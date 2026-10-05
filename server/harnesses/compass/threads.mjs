@@ -221,15 +221,23 @@ export async function toThread(run, row, viewer, surfaces, now = Date.now(), opt
     if (viewer.canTap(g)) unread = true
   }
 
+  // An approval gate this viewer cannot tap is kept as a fact and nothing more: the run waits on a person, so it is
+  // not running (`running`, `gates`), but its name (the proposal id), its link, its label and its surface are the
+  // approver's and stay off this viewer's thread — the title, the panel, Open, the tray (review 2, 2026-10-06: a run with a
+  // client_gate and a proposal showed the client "approve in Compass" and the console link). D2 already keeps the ? off.
+  const hidden = (g) => g.surface === 'approval' && !viewer.canTap(g)
+  const shown = pending.filter((g) => !hidden(g))
+  const openShown = open.filter((g) => !hidden(g))
+
   const progress = run.project ? await surfaces.progress(run.project) : 0.05
-  const gate = newest(pending)
+  const gate = newest(shown)
   // An approval gate's ref_url is never the Context link: whatever it says, the layer did not write it (review 1).
   const contextUrl = gate && gate.surface !== 'approval' && isLink(gate.ref_url) ? gate.ref_url : ''
   // A run can leave several gates (a content run leaves one per draft). Say so, or the human signs
   // one and wonders why the ? is still there — seen live 2026-09-06. Open goes to the next pending one.
-  const gateLabel = gate ? (open.length > 1 ? `${gate.gate} (${pending.length} of ${open.length} left)` : gate.gate) : ''
+  const gateLabel = gate ? (openShown.length > 1 ? `${gate.gate} (${shown.length} of ${openShown.length} left)` : gate.gate) : ''
   const art = newest(run.artifacts)
-  const openUrl = openUrlFor(run, row, pending, opts)
+  const openUrl = openUrlFor(run, row, shown, opts)
   // Set here, on the server, when Open is the Compass console's page for the gate's proposal: the panel's "Open in
   // Compass" reads this flag, never the link's shape (review 1).
   const gateLink = gate ? gateUrl(gate, opts) : ''
@@ -240,7 +248,7 @@ export async function toThread(run, row, viewer, surfaces, now = Date.now(), opt
   // Bot Crossing never renders `preview`; the overlay panel (U11) does. For a pending gate it carries
   // the full instruction; otherwise the run's own notes, so the panel has something to say.
   const preview = gate
-    ? `${gateLabel} — ${whatToDoLong(gate, run)}${open.length > 1 ? ` This run left ${open.length} of these; ${open.length - pending.length} already done, ${pending.length} still waiting — Open takes you to the next one.` : ''}`
+    ? `${gateLabel} — ${whatToDoLong(gate, run)}${openShown.length > 1 ? ` This run left ${openShown.length} of these; ${openShown.length - shown.length} already done, ${shown.length} still waiting — Open takes you to the next one.` : ''}`
     : run.terminal === 'run_failed'
       ? failedText(run, row)
       : (typeof row?.notes === 'string' && row.notes.trim()) || art?.title || `${run.trigger || 'unknown'} run`
@@ -283,8 +291,8 @@ export async function toThread(run, row, viewer, surfaces, now = Date.now(), opt
     // The gates still open on their surface (U14): the in-tray orders by the oldest one; each says who can tap it.
     // An approval-layer gate also carries its own link (`url`: its proposal in the Compass console, or ''), so the tray's
     // Approve opens that proposal and nothing else, and its ref_url is never passed on; every other gate's link is its
-    // ref_url.
-    gates: pending.map((g) => ({ gate: g.gate, surface: g.surface, ref_url: g.surface !== 'approval' && isLink(g.ref_url) ? g.ref_url : '', at: g.at, canTap: viewer.canTap(g), what: whatToDo(g, run), ...(g.surface === 'approval' ? { url: gateUrl(g, opts) } : {}) })),
+    // ref_url. An approval gate this viewer cannot tap is a blank entry: counted, timed, nothing else (review 2).
+    gates: pending.map((g) => hidden(g) ? { gate: '', surface: '', ref_url: '', at: g.at, canTap: false, what: '' } : ({ gate: g.gate, surface: g.surface, ref_url: g.surface !== 'approval' && isLink(g.ref_url) ? g.ref_url : '', at: g.at, canTap: viewer.canTap(g), what: whatToDo(g, run), ...(g.surface === 'approval' ? { url: gateUrl(g, opts) } : {}) })),
     gateAt: pending.length ? Math.min(...pending.map((g) => g.at)) : 0,
     ref: { run_id: run.id, url: openUrl, context: contextUrl && contextUrl !== openUrl ? contextUrl : '', ...(consoleOpen ? { console: true } : {}) },
   }

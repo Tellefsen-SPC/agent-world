@@ -221,3 +221,55 @@ test("approval: the panel's Open label is approve.mjs's, fed the server's flag �
   assert.ok(!/(?:\b(?:const|let|var|function)\s+openLabel\b|\bopenLabel\s*=)/.test(main), 'main.js defines no openLabel of its own')
   assert.match(main, /openLabel\(url, thread\.ref\?\.console\)/, "the run panel's Open button passes the server's console flag")
 })
+
+test("approval: a run with the client's own gate and a proposal shows the client only their gate — no approval name, link, label or title, on any route (review 2)", async () => {
+  const { buildStill, isLive } = await import(path.join(root, 'server/harnesses/compass/still.mjs'))
+  const { loadPack } = await import(path.join(root, 'server/harnesses/compass/pack.mjs'))
+  const pack = loadPack('tellefsen-campus')
+  const place = (c) => ({ zone: c || 'ZZTEST HQ', planet: 'zz', pack: pack.id, town: Boolean(c) })
+  const ACCEPT = 'https://app.notion.com/p/zztest-acceptance'
+  const clientGate = (id, at) => ev(id, 'gate_waiting', { surface: 'client_gate', gate: 'ZZTEST acceptance', ref_url: ACCEPT }, { at })
+  const proposal = (id, at) => ev(id, 'gate_waiting', { surface: 'approval', gate: `approval:${PROPOSAL}`, ref: PROPOSAL }, { at })
+  const orders = {
+    'proposal newest': [ev('e1', 'run_started'), clientGate('e2', '2026-10-06T07:00:00Z'), proposal('e3', '2026-10-06T07:30:00Z')],
+    'proposal oldest': [ev('e1', 'run_started'), proposal('e2', '2026-10-06T07:00:00Z'), clientGate('e3', '2026-10-06T07:30:00Z')],
+  }
+  // the approval surface's own marks — not the word inside pending_approval, which the corner office's board carries
+  const leaks = (x) => ['approval:', '"approval"', 'Compass', 'console', PROPOSAL, WORKER].filter((s) => JSON.stringify(x).includes(s))
+  for (const [order, events] of Object.entries(orders)) {
+    const runs = fold(events)
+    const scan = async (preset) => {
+      const viewer = makeViewer({ preset })
+      const threadOf = new Map([[RUN, await toThread(runs.get(RUN), null, viewer, surfaces, NOW, { place, consoleProposalsUrl: `${WORKER}/console/proposals` })]])
+      return { thread: threadOf.get(RUN), still: buildStill({ now: NOW, runs, threadOf, pack, place, viewer }) }
+    }
+    for (const preset of ['client', 'prime']) {
+      const { thread, still } = await scan(preset)
+      const req = still.threads.find((t) => t.id === RUN)
+      assert.ok(req?.unread, `${preset}, ${order}: the client's own gate is a ?`)
+      assert.equal(req.title, "? Client's tap · client", `${preset}, ${order}: titled by the gate they can tap`)
+      assert.equal(req.gitBranch, "client's to tap")
+      assert.equal(req.ref.url, ACCEPT, 'Open is their own gate')
+      assert.equal(req.ref.console, undefined)
+      assert.ok(req.preview.startsWith('ZZTEST acceptance — '), `${preset}, ${order}: the panel names their gate: ${req.preview}`)
+      assert.deepEqual(leaks(thread), [], `${preset}, ${order}: the run's thread carries nothing of the proposal`)
+      assert.deepEqual(leaks(still.threads), [], `${preset}, ${order}: nor does anything the still map serves (/api/threads, the rooms)`)
+      const rows = intrayRows(still.threads)
+      assert.deepEqual(rows.map((r) => [r.gate, r.what, r.url]), [['ZZTEST acceptance', "client's to tap", ACCEPT]], `${preset}, ${order}: the tray row is their gate`)
+      assert.deepEqual(leaks(rows), [])
+      assert.equal(thread.gates.length, 2, 'the proposal is still a gate the run waits on…')
+      assert.equal(thread.running, false, '…so the run is blocked, not running')
+    }
+    for (const preset of ['operator', 'viewer']) {
+      const { thread, still } = await scan(preset)
+      assert.ok(!still.threads.some((t) => t.id === RUN), `${preset}, ${order}: neither gate is theirs → no thread`)
+      assert.deepEqual(leaks(thread), [], `${preset}, ${order}: and the run's thread carries nothing of the proposal`)
+      assert.equal(isLive(runs.get(RUN), thread, NOW, 2 * 3600e3), false, 'a run waiting on someone else is not counted as running')
+      assert.equal(still.counts.running, 0)
+    }
+    // the Owner sees both, the proposal with its link
+    const { thread } = await scan('owner')
+    assert.deepEqual(thread.gates.map((g) => [g.gate, g.surface, g.canTap]).sort(), [['ZZTEST acceptance', 'client_gate', true], [`approval:${PROPOSAL}`, 'approval', true]].sort())
+    assert.equal(thread.gates.find((g) => g.surface === 'approval').url, CONSOLE)
+  }
+})
