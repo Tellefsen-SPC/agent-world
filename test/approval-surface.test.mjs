@@ -88,6 +88,8 @@ test('approval: a malformed or injected gate name gives no link — never a brok
     `approval:?${PROPOSAL}`, `approval:#${PROPOSAL}`, `approval:${PROPOSAL}/../../ledger/zztest`, `approval:../${PROPOSAL}`, `approval:%2e%2e%2f${PROPOSAL}`,
     `approval:${PROPOSAL}\n`, ` approval:${PROPOSAL}`, `approval: ${PROPOSAL}`, `approval:${PROPOSAL.slice(0, -1)}`, `approval:${PROPOSAL}0`, `approval:${PROPOSAL.replace(/-/g, '')}`,
     `approval:${PROPOSAL.replace('a', 'g')}`, `approval:javascript:alert(1)`, `proposal:${PROPOSAL}`, PROPOSAL, 'approval', '',
+    // the layer's gate name is approvalGateName's `approval:` exactly (review nit 6): another case of the word is not it
+    `APPROVAL:${PROPOSAL}`, `Approval:${PROPOSAL}`, `aPPROVAL:${PROPOSAL}`,
   ]
   for (const name of bad) {
     assert.equal(threadsMod.approvalConsoleUrl(name, `${WORKER}/console/proposals`), null, `no link for ${JSON.stringify(name)}`)
@@ -100,6 +102,12 @@ test('approval: a malformed or injected gate name gives no link — never a brok
   // only the https console prefix config.mjs derives — a prefix handed in any other shape gives nothing
   for (const prefix of ['http://zztest-worker.example/console/proposals', 'https://zztest-worker.example/ledger/scan', 'https://zztest-worker.example/console/proposals/', 'javascript:alert(1)//console/proposals', '', undefined])
     assert.equal(threadsMod.approvalConsoleUrl(`approval:${PROPOSAL}`, prefix), null, `no link under ${JSON.stringify(prefix)}`)
+  // belt and braces (review nit 7): a prefix of the right shape whose host or port the URL parser refuses — one
+  // config.mjs never makes, since it builds the prefix from a parsed URL — gives nothing either
+  for (const prefix of ['https://zztest<worker.example/console/proposals', 'https://zztest-worker.example:99999/console/proposals', 'https://zz%zz/console/proposals', 'https://[zz/console/proposals'])
+    assert.equal(threadsMod.approvalConsoleUrl(`approval:${PROPOSAL}`, prefix), null, `no link under ${JSON.stringify(prefix)}`)
+  // the hex itself may come in either case: the same uuid, linked in the lowercase the layer mints
+  assert.equal(threadsMod.approvalConsoleUrl(`approval:${PROPOSAL.toUpperCase()}`, `${WORKER}/console/proposals`), CONSOLE)
 })
 
 test('approval: a gate that carries a usable ref_url opens it, as every gate does; a ref_url that is not a link falls back to the console', async () => {

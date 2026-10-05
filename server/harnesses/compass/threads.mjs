@@ -85,11 +85,13 @@ export function artifactsOf(run, row) {
 /**
  * An approval-layer gate (Compass src/lib/approval; vendor/approval-layer `approvalGateName`) is named
  * approval:<proposal id>, and a proposal id is a uuid: minted by crypto.randomUUID on the Worker, kept in a uuid column,
- * matched by the Worker's /proposals/:id routes as 36 hex-and-dash characters. Only the canonical 8-4-4-4-12 form is
- * taken. Anything else — no id, a path, markup, a space, a ? or #, a percent escape, a newline — gives no link, never a
- * broken or injected one.
+ * matched by the Worker's /proposals/:id routes as 36 hex-and-dash characters. Only `approval:` exactly (the layer's
+ * own word, in lower case) and the canonical 8-4-4-4-12 form are taken; the hex may be either case. Anything else —
+ * no id, a path, markup, a space, a ? or #, a percent escape, a newline, `APPROVAL:` — gives no link, never a broken
+ * or injected one.
  */
-const APPROVAL_GATE = /^approval:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i
+const UUID = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+const APPROVAL_GATE = new RegExp(`^approval:(${UUID})$`)
 /** The console prefix exactly as config.mjs derives it from EVENTS_URL: https, no user, query or fragment, ending in /console/proposals. */
 const CONSOLE_PREFIX = /^https:\/\/[^\s/?#@\\]+(?:\/[^\s?#@\\]*)?\/console\/proposals$/
 
@@ -102,9 +104,11 @@ export function approvalConsoleUrl(gateName, consoleProposalsUrl) {
   const m = typeof gateName === 'string' ? APPROVAL_GATE.exec(gateName) : null
   if (!m || typeof consoleProposalsUrl !== 'string' || !CONSOLE_PREFIX.test(consoleProposalsUrl)) return null
   const url = `${consoleProposalsUrl}/${encodeURIComponent(m[1].toLowerCase())}`
+  // Belt and braces: CONSOLE_PREFIX already rules out another scheme, a user, a query and a fragment, and config.mjs
+  // builds the prefix from a parsed URL. What is left is a prefix of the right shape whose host or port the URL parser
+  // refuses (`https://a<b/…`, `:99999`) — handed in by some other caller; it gives no link rather than a broken one.
   try {
-    const u = new URL(url)
-    if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash) return null
+    new URL(url)
   } catch {
     return null
   }
