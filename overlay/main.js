@@ -51,7 +51,7 @@ import { createLabel, Plot, PLOT_PALETTE, hashString, worldToHex } from '../src/
 import { artifactRows, BubbleTracker, newestArtifactAt, bubbleEligible } from './artifacts.mjs'
 import { shelfSections, projectTab } from './archive.mjs'
 import { foldSpend, spendLineFor, estLineFor, townLines, todayLineFor, todayIsCurrent, showSpend, summary as spendSummary } from './spend.mjs'
-import { intrayRows, nextRow, withHands } from './intray.mjs'
+import { intrayRows, nextRow, withHands, panelAsk } from './intray.mjs'
 import { ApproveTracker, approveIntent, openLabel } from './approve.mjs'
 import { mayAsk, subjectsFor, pickSubject, requestBody, initialPa, paReduce, panelModel, MAX_QUESTION } from './pa.mjs'
 
@@ -366,12 +366,12 @@ function render(sel) {
   // M2b: a request's title is badge · verb · surface and its skill rides on `skill`; the gate's name is in the tray row / preview.
   const parts = String(thread.title || '').split(' · ')
   const skill = thread.skill || parts[0]
-  const gate = thread.kind === 'request' ? (thread.gates?.[0]?.gate || '') : parts.slice(1).join(' · ')
+  // the gate and its full instruction: for a request, the first gate this viewer can tap (overlay/intray.mjs panelAsk)
+  const { gate, instruction } = panelAsk(thread)
   const status = agent.status || 'idle'
   const url = thread.ref?.url
   // The adapter puts "<gate> — <full instruction>" in preview while a gate is pending; the run's notes otherwise.
   const preview = String(thread.preview || '')
-  const instruction = gate && preview.startsWith(gate + ' — ') ? preview.slice(gate.length + 3) : ''
   // A town that wears its own pack (world_branding.pack, carried on the thread) speaks it here: its nouns, its rooms.
   const p = packOf(thread.pack)
   const room = roomOf(thread, p)

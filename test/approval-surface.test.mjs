@@ -279,3 +279,44 @@ test("approval: a run with the client's own gate and a proposal shows the client
     assert.equal(thread.gates.find((g) => g.surface === 'approval').url, CONSOLE)
   }
 })
+
+test("approval: the panel's \"What it wants from you\" names the first gate the viewer can tap — on a mixed run, the client's own gate and instruction, never the blank entry (review, panel gap)", async () => {
+  const intray = await import(path.join(root, 'overlay/intray.mjs'))
+  assert.equal(typeof intray.panelAsk, 'function', 'the panel\'s choice is pure, in overlay/intray.mjs')
+  const { buildStill } = await import(path.join(root, 'server/harnesses/compass/still.mjs'))
+  const { loadPack } = await import(path.join(root, 'server/harnesses/compass/pack.mjs'))
+  const pack = loadPack('tellefsen-campus')
+  const place = (c) => ({ zone: c || 'ZZTEST HQ', planet: 'zz', pack: pack.id, town: Boolean(c) })
+  const clientGate = (id, at) => ev(id, 'gate_waiting', { surface: 'client_gate', gate: 'ZZTEST acceptance', ref_url: 'https://app.notion.com/p/zztest-acceptance' }, { at })
+  const proposal = (id, at) => ev(id, 'gate_waiting', { surface: 'approval', gate: `approval:${PROPOSAL}` }, { at })
+  const request = async (events, preset) => {
+    const runs = fold(events)
+    const viewer = makeViewer({ preset })
+    const threadOf = new Map([[RUN, await toThread(runs.get(RUN), null, viewer, surfaces, NOW, { place, consoleProposalsUrl: `${WORKER}/console/proposals` })]])
+    return buildStill({ now: NOW, runs, threadOf, pack, place, viewer }).threads.find((t) => t.id === RUN)
+  }
+  const CLIENT_LINE = 'This acceptance is addressed to the client; it is theirs to tap, not yours.'
+  for (const events of [
+    [ev('e1', 'run_started'), proposal('e2', '2026-10-06T07:00:00Z'), clientGate('e3', '2026-10-06T07:30:00Z')], // gates[0] is the blank entry
+    [ev('e1', 'run_started'), clientGate('e2', '2026-10-06T07:00:00Z'), proposal('e3', '2026-10-06T07:30:00Z')],
+  ]) {
+    const t = await request(events, 'client')
+    assert.deepEqual(intray.panelAsk(t), { gate: 'ZZTEST acceptance', instruction: CLIENT_LINE }, 'the client reads their own gate and its full instruction')
+  }
+  // the Owner's approval request: the proposal and its line, as before
+  const owner = await request([ev('e1', 'run_started'), proposal('e2', '2026-10-06T07:00:00Z')], 'owner')
+  assert.deepEqual(intray.panelAsk(owner), { gate: `approval:${PROPOSAL}`, instruction: LONG })
+  // the rule itself: the first gate the viewer can tap, else the first; none, nothing
+  const shaped = (gates, preview = '') => ({ kind: 'request', gates, preview })
+  assert.equal(intray.panelAsk(shaped([{ gate: '', canTap: false }, { gate: 'B', canTap: true }, { gate: 'C', canTap: true }])).gate, 'B')
+  assert.equal(intray.panelAsk(shaped([{ gate: 'A', canTap: false }, { gate: 'B', canTap: false }])).gate, 'A', 'nobody\'s gate: the first, as still.mjs titles it')
+  assert.deepEqual(intray.panelAsk(shaped([], 'Failed: zztest.')), { gate: '', instruction: '' })
+  assert.deepEqual(intray.panelAsk(shaped([{ gate: 'B', canTap: true }], 'B — do the thing')), { gate: 'B', instruction: 'do the thing' })
+  // a thread of the older shape names its gate in the title, after the skill
+  assert.deepEqual(intray.panelAsk({ title: 'zztest-skill · ZZTEST gate', preview: 'ZZTEST gate — approve it' }), { gate: 'ZZTEST gate', instruction: 'approve it' })
+  // and the panel uses it (main.js needs a DOM, so its wiring is read, not run)
+  const main = fs.readFileSync(path.join(root, 'overlay/main.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  assert.match(main, /import\s*\{[^}]*\bpanelAsk\b[^}]*\}\s*from\s*'\.\/intray\.mjs'/, 'main.js imports panelAsk from ./intray.mjs')
+  assert.match(main, /const \{ gate, instruction \} = panelAsk\(thread\)/, 'the panel takes its gate and instruction from it')
+  assert.ok(!/gates\?\.\[0\]\?\.gate/.test(main), 'and no longer reads gates[0] for the gate')
+})

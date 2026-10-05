@@ -56,6 +56,22 @@ export function intrayRows(threads) {
 }
 
 /**
+ * What the selection panel's "What it wants from you" names (overlay/main.js): the gate, and the full instruction when
+ * the adapter's preview starts with "<gate> — ". A request names the first gate this viewer can tap, else its first —
+ * the rule compass/still.mjs titles a request by — so on a run with the client's own gate and a proposal the client
+ * reads their gate, never the blank entry an approval gate they cannot tap leaves in `gates` (review, 2026-10-06). A
+ * thread of the older shape names its gate in the title, after the skill.
+ */
+export function panelAsk(thread) {
+  const gates = Array.isArray(thread?.gates) ? thread.gates : []
+  const gate = thread?.kind === 'request'
+    ? String((gates.find((g) => g?.canTap) || gates[0])?.gate || '')
+    : String(thread?.title || '').split(' · ').slice(1).join(' · ')
+  const preview = String(thread?.preview || '')
+  return { gate, instruction: gate && preview.startsWith(gate + ' — ') ? preview.slice(gate.length + 3) : '' }
+}
+
+/**
  * U33 (ES-6.8): the hand-raise as a tray line. A skill silent 30 d that the pack wants (its override names a wants value
  * an Active project's Tech Stack contains) is a dusty row in its room panel and a lowest-precedence line here — never a
  * figure, so N never lands on it. `dusty` are the sidecar's dusty skill rows: [{ name, room, wants }].
