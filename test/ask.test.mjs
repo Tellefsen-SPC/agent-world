@@ -488,3 +488,15 @@ test('U16 (review of ed7aba9, 1): substrateNames reads the substrate only — Ac
   assert.ok(!JSON.stringify(got).includes('Christoffer') && !JSON.stringify(got).includes('Former'))
   assert.deepEqual(substrateNames(null), { skills: [], clients: [], terms: [] }, 'no substrate: nothing known, so more is withheld')
 })
+
+test('U16W (Compass #18): a client or town over 600 bytes once URL-encoded is refused here, as the Worker refuses it — never sent; the panel never builds one', async () => {
+  const pa = await import(path.join(root, 'overlay/pa.mjs'))
+  const arabic = 'ص'.repeat(150) // 150 characters, 900 bytes once URL-encoded (6 a letter)
+  assert.ok(arabic.length <= 200 && encodeURIComponent(arabic).length > 600)
+  assert.match(parseQuestion({ question: 'q', context: { town: arabic } }).error, /context\.town exceeds 600 bytes once URL-encoded/)
+  assert.match(parseQuestion({ question: 'q', context: { client: arabic } }).error, /context\.client exceeds 600 bytes/)
+  assert.equal(parseQuestion({ question: 'q', context: { project: arabic } }).error, undefined, 'a project or milestone is named, not filtered on: only the length rule')
+  assert.equal(parseQuestion({ question: 'q', context: { town: 'ص'.repeat(100) } }).error, undefined, '600 bytes is allowed')
+  const subjects = pa.subjectsFor({ thread: { id: 'a1a1a1a1-0000-4000-8000-000000000001', kind: 'request', skill: 'zztest-approver', project: arabic }, towns: [arabic] })
+  assert.ok(subjects.every((x) => !('town' in x.context)), 'the panel sends such a town as no town')
+})

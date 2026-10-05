@@ -2,7 +2,7 @@
  * Compass adapter — the PA's question, forwarded (U16W wiring; ES-4.6; docs/adr/0008).
  *
  * The PA panel (overlay/pa.mjs, U16) asks a question about a run, a town or a milestone. The Worker answers it at
- * `POST /ask` (tellefsen-compass-mcp, branch compass-ask: docs/ask.md) — the one model call in the Agent World stack,
+ * `POST /ask` (tellefsen-compass-mcp main, merged as #18 on 2026-10-05: docs/ask.md) — the one model call in the Agent World stack,
  * a governed run of its own on the Worker. The browser never holds the Worker's bearer: it asks the sidecar's
  * `POST /ask` (overlay-api.mjs), which hands the body here; this module checks and bounds it, forwards it with the
  * bearer and a deadline, and passes the Worker's status back with a body cut to spec/ask.v1.json.
@@ -25,6 +25,8 @@ import { ASK_TIMEOUT_MS } from './config.mjs'
 export const MAX_BODY_BYTES = 8 * 1024
 export const MAX_QUESTION_CHARS = 1000
 export const MAX_CONTEXT_TEXT = 200
+/** A client or town (not a project or milestone) at most this many bytes once URL-encoded — the Worker's own bound (#18). */
+export const MAX_CONTEXT_URL_BYTES = 600
 export const CONTEXT_KEYS = Object.freeze(['run_id', 'client', 'town', 'zone', 'milestone', 'project'])
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 // eslint-disable-next-line no-control-regex
@@ -60,6 +62,7 @@ export function parseQuestion(body) {
       if (!t) continue
       if (t.length > MAX_CONTEXT_TEXT) return { error: `context.${key} exceeds ${MAX_CONTEXT_TEXT} characters` }
       if (CONTROL.test(t) || /["\\]/.test(t)) return { error: `context.${key} may not contain quotes, backslashes or control characters` }
+      if (key !== 'project' && key !== 'milestone' && encodeURIComponent(t).length > MAX_CONTEXT_URL_BYTES) return { error: `context.${key} exceeds ${MAX_CONTEXT_URL_BYTES} bytes once URL-encoded; send a shorter name` }
       if (key === 'zone' || key === 'town') {
         if (context.town && context.town !== t) return { error: 'context.zone and context.town disagree; send one' }
         context.town = t

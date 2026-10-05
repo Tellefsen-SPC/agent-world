@@ -31,6 +31,11 @@ export function cleanText(v) {
   const t = String(v ?? '').trim()
   return t && t.length <= MAX_PLACE && !CONTROL.test(t) && !/["\\]/.test(t) ? t : ''
 }
+/** A town the Worker will take: cleanText, and at most 600 bytes once URL-encoded (the Worker's bound since #18). */
+const cleanPlace = (v) => {
+  const t = cleanText(v)
+  return t && encodeURIComponent(t).length <= 600 ? t : ''
+}
 
 const SUGGEST = Object.freeze({
   run: ['What is this run waiting on?', 'What did this run produce?', 'What did this run cost?'],
@@ -53,7 +58,7 @@ export function subjectsFor({ thread = null, town = '', towns = [], noun = 'town
   const add = (s) => {
     if (!out.some((o) => o.id === s.id)) out.push(s)
   }
-  const townOf = (name) => (isTown(name) ? cleanText(name) : '')
+  const townOf = (name) => (isTown(name) ? cleanPlace(name) : '')
   if (thread?.kind === 'request') {
     const place = townOf(thread.project)
     const skill = String(thread.skill || String(thread.title || '').split(' · ')[0] || 'run')
