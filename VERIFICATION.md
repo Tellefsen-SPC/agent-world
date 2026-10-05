@@ -85,7 +85,7 @@ Cleanup: set the ZZTEST Alpha row back to Pending Approval for the next run of t
 ## V-U7 — Realtime nudge (over the Worker's event stream)
 *Re-based 2026-10-04 by the developer under delegated authority, to ratify: U7 no longer needs a Supabase key — it listens to the Compass Worker's `GET /events/stream` (SPEC.md §4.7). Until the Worker is deployed from main, this check cannot run; the automated half is `test/stream.test.mjs` and `test/stream-harness.test.mjs`.*
 
-What only the nudge can cause: the scan is cached for 5 s from when it finishes, so without the nudge a poll inside that window gets the cached answer. With the nudge, an event drops the cache, and the next poll reads the ledger at once. `signals.stream.nudgedScans` counts exactly those early reads.
+What only the nudge can cause: the scan is cached for 5 s from when it finishes, so without the nudge a poll inside that window gets the cached answer. With the nudge, an event drops the cache, and the next poll reads the ledger at once. `signals.stream.nudgedScans` counts exactly those early reads. A scan is counted only if it starts before the dropped cache would have run out on its own (for an event during a scan, that scan's finish + 5 s). A poll after natural expiry is never counted, and a nudge that drops nothing cannot raise the count (`test/stream-harness.test.mjs` proves both, including that a nudge with its cache drop removed reads 0).
 
 - **Setup:** the Worker deployed from main. With `.env` loaded (`set -a; . ./.env; set +a`), `curl -sN -m 5 -H "Authorization: Bearer $EVENTS_BEARER_TOKEN" "${EVENTS_URL}/stream" | head -2` prints `retry: 1000` and `: connected — polling every 2s`. A 404 means the Worker on Cloudflare is older than main: stop here.
 - **Do:**
@@ -100,9 +100,9 @@ What only the nudge can cause: the scan is cached for 5 s from when it finishes,
   - Step 2 shows `connected: true`, `nudges: 0`, `nudgedScans: 0`.
   - During step 3, before step 4: the debug log's `[world] ledger: … events, … rows since …` lines (the 14-day window) come about every 10–15 s, not once a second. A live read takes 6–9 s, then the cache serves the loop for 5 s.
   - Within about 3 s of step 4: `[world] realtime: run_started on run 1a2b3c4d received — scan cache invalidated` (the run id's first 8 characters). The loop's next poll then starts a scan at once, and its `[world] ledger: …` line follows when that read returns.
-  - Step 5 shows `nudges` and `nudgedScans` at 1 or more, and `lastEventAt` set. Only the nudge raises `nudgedScans`.
+  - Step 5 shows `nudges` and `nudgedScans` at 1 or more, and `lastEventAt` set. Only a working nudge raises `nudgedScans`. If it reads 0 with `nudges` at 1 or more, the event landed in the under-a-second gap between the cache running out and the loop's next poll, where no read is early. Run step 4 again; two zeros in a row is a fail.
   - With `WORLD_STREAM=0` (step 6): `connected: false`, `state: 'off'`, `nudges: 0`, `nudgedScans: 0`, no `realtime:` line, and after `--one` the next `ledger:` line waits for the cache to run out. The world works as before.
-  - About every 50 s, the debug log prints `[world] realtime: the Worker closed the stream after 50 s — reconnecting in 1000 ms with Last-Event-ID`, and `connected` is true again a second later. No warning is printed for these.
+  - About every 50 s, the debug log prints `[world] realtime: the Worker closed the stream after 50 s — reconnecting in 1000 ms with Last-Event-ID`. Before the first event has arrived, it prints the line without the ending: `[world] realtime: the Worker closed the stream after 50 s — reconnecting in 1000 ms`. Either way, `connected` is true again a second later, and no warning is printed.
 - **Fail looks like:**
   - no `subscribed` line, or `nudgedScans` that stays 0 while events arrive;
   - an event that never logs `scan cache invalidated`;

@@ -114,13 +114,60 @@ test('a stream event drops the scan cache; a stream that is down or hanging neve
     assert.equal(scans, 4, 'and with no new event, the cache serves the next poll')
     assert.equal(_internals.signals().compass.ok, true)
 
+    // nudgedScans counts only a scan that starts before the un-nudged cache would have run out. A short cache stands
+    // in for the 5 s; every poll below comes after that moment, so none is early — whatever events arrived.
+    _internals.cfg.scanCacheMs = 120
+    await sleep(150)
+    await harness.scanThreads() // a fresh scan; the cache now runs to finish + 120 ms
+    const counted = _internals.stream().nudgedScans
+    let n = 4
+    // (a) an event while the cache is fresh, then a poll after it would have run out anyway: not early
+    push(n++)
+    await until(() => _internals.stream().nudges === n - 1, 3000, 'the event')
+    await sleep(200)
+    await harness.scanThreads()
+    assert.equal(_internals.stream().nudgedScans, counted, 'a poll after natural expiry is not counted, though an event came first')
+    // (b) an event during a scan, then a poll after that scan's finish + the cache: not early either
+    scanDelayMs = 80
+    await sleep(150)
+    const during = harness.scanThreads()
+    await sleep(20)
+    push(n++)
+    await until(() => _internals.stream().nudges === n - 1, 3000, 'the event during the scan')
+    await during
+    scanDelayMs = 0
+    await sleep(200)
+    await harness.scanThreads()
+    assert.equal(_internals.stream().nudgedScans, counted, 'nor after an event during a scan, once the cache would have run out')
+    // (c) the reviewer's scene: one viewer polling slower than scan + cache, events landing during scans and between
+    // them. No scan is early, so the count stays where it was — as it must for a nudge that drops nothing.
+    scanDelayMs = 40
+    for (let i = 0; i < 7; i++) {
+      const poll = harness.scanThreads()
+      if (i % 2 === 0) { await sleep(10); push(n++) } // during the scan
+      await poll
+      if (i % 2 === 1) { await sleep(30); push(n++) } // while the cache is fresh
+      await until(() => _internals.stream().nudges === n - 1, 3000, 'each event')
+      await sleep(220) // past finish + 120 ms
+    }
+    scanDelayMs = 0
+    assert.equal(_internals.stream().nudgedScans, counted, 'seven polls, every one after natural expiry: zero early scans')
+    // and the early read still counts when it is one: an event on a fresh cache, then a poll at once
+    await harness.scanThreads()
+    push(n++)
+    await until(() => _internals.stream().nudges === n - 1, 3000, 'the last event')
+    await harness.scanThreads()
+    assert.equal(_internals.stream().nudgedScans, counted + 1, 'a poll inside the window after an event is early, and counted')
+    _internals.cfg.scanCacheMs = 5000
+
     // the stream goes down: polls carry on, and Compass is not called unavailable
     streamMode = '503'
     for (const s of streams.splice(0)) s.destroy()
     await until(() => _internals.stream().state === 'waiting' && /503/.test(_internals.stream().error), 5000, 'the stream to fail')
+    const before = scans
     _internals.invalidate()
     await harness.scanThreads()
-    assert.equal(scans, 5)
+    assert.equal(scans, before + 1, 'the poll reads the ledger as usual')
     assert.equal(_internals.signals().compass.ok, true, 'a stream that is down is not an outage')
     assert.deepEqual(_internals.signals().compass.failing, [])
 

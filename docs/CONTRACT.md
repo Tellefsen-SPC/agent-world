@@ -58,4 +58,6 @@ token, no run, no person:
   `lastGoodAt` is when the failing sources last answered.
 - `signals.stream = {enabled, connected, state, since, lastEventAt, nudges, nudgedScans, reconnects, error}` (U7).
   `state` is one of off, connecting, open or waiting. `nudges` counts the events that dropped the cache.
-  `nudgedScans` counts the scans that ran early because of one; it stays 0 with `WORLD_STREAM=0`.
+  `nudgedScans` counts the scans that ran early because of one. A scan counts only if it starts before the dropped
+  cache would have run out on its own, so a poll after natural expiry never counts. It stays 0 with `WORLD_STREAM=0`,
+  and with a nudge that drops nothing.

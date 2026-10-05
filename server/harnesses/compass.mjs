@@ -142,13 +142,21 @@ let nudgedAt = 0
 /** What the nudge has done since start: events that dropped the cache, and scans that ran early because of one. */
 let nudges = 0
 let nudgedScans = 0
-let nudgePending = false
+/** When the last scan finished — the cache's own clock, kept apart from scanCache.at, which a nudge zeroes. */
+let scanFinishedAt = 0
+/**
+ * A scan that starts before this moment starts early: before the cache a nudge dropped would have run out on its own.
+ * 0 when no nudge is waiting. Only such a scan is counted, so a poll that comes after natural expiry is never credited
+ * to the nudge — and a nudge that dropped nothing can never raise the count (V-U7 rests on that).
+ */
+let earlyUntil = 0
 function nudge(row) {
   nudges += 1
   nudgedAt = Date.now()
-  // Only a cache that was still fresh (or a scan still running) makes the next poll read sooner than it would have:
-  // that early read is the one thing only the nudge causes, counted as nudgedScans when it starts.
-  if (scanning || nudgedAt - scanCache.at < cfg.scanCacheMs) nudgePending = true
+  // A fresh cache, dropped now, would have run out at its finish + scanCacheMs. An event during a scan sets its window
+  // when that scan finishes (runScan).
+  const expires = scanFinishedAt + cfg.scanCacheMs
+  if (!scanning && scanCache.at && nudgedAt < expires) earlyUntil = Math.max(earlyUntil, expires)
   scanCache = { at: 0, threads: scanCache.threads }
   log(`realtime: ${row?.event_type || 'event'} on run ${String(row?.run_id || '?').slice(0, 8)} received — scan cache invalidated`)
 }
@@ -282,9 +290,10 @@ let scanning = null
 function scanThreads() {
   if (Date.now() - scanCache.at < cfg.scanCacheMs) return Promise.resolve(scanCache.threads)
   if (!scanning) {
-    if (nudgePending) nudgedScans += 1 // this scan runs now, inside the cache window, because an event dropped the cache
-    nudgePending = false
-    scanning = runScan(Date.now()).finally(() => (scanning = null))
+    const t = Date.now()
+    if (t < earlyUntil) nudgedScans += 1 // before the dropped cache would have run out: early, because of an event
+    earlyUntil = 0
+    scanning = runScan(t).finally(() => (scanning = null))
   }
   return scanning
 }
@@ -304,7 +313,13 @@ async function runScan(now) {
     health.fail(err)
     scanCache = { at: Date.now(), threads: scanCache.threads }
   }
-  if (nudgedAt >= now) scanCache.at = 0 // U7: an event landed while this scan ran — the next poll reads again
+  scanFinishedAt = scanCache.at
+  if (nudgedAt >= now) {
+    // U7: an event landed while this scan ran — its answer is stale, and the next poll reads again. Without the event
+    // that answer would have served polls until now + scanCacheMs: a scan before then is early.
+    earlyUntil = Math.max(earlyUntil, scanFinishedAt + cfg.scanCacheMs)
+    scanCache.at = 0
+  }
   // The substrate is the world's map: when it is failing, the towns on screen are old (or missing) too.
   const sub = substrate.status?.()
   if (sub?.ok === true) health.ok('substrate')
